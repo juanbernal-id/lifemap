@@ -1,0 +1,7 @@
+data/
+.env
+kaggle.json
+__pycache__/
+*.pyc
+.devcontainer_history
+*.bak

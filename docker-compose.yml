@@ -1,0 +1,78 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: lifemap_mongo
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  api:
+    build: ./api
+    container_name: lifemap_api
+    ports:
+      - "5051:5000"
+    environment:
+      - MONGO_URI=mongodb://mongo:27017
+      - MONGO_DB=lifemap
+      - GIT_COMMIT=${GIT_COMMIT:-dev}
+    volumes:
+      - ./outputs:/app/outputs:ro
+    depends_on:
+      - mongo
+
+  spark-master:
+    build: ./spark
+    image: lifemap-spark
+    container_name: lifemap_spark_master
+    command: spark-class org.apache.spark.deploy.master.Master --host spark-master --port 7077 --webui-port 8080
+    ports:
+      - "8091:8080"
+    volumes:
+      - .:/app
+      - ivy-cache:/root/.ivy2
+
+  spark-worker:
+    build: ./spark
+    image: lifemap-spark
+    container_name: lifemap_spark_worker
+    command: spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077 --cores 2 --memory 2g --webui-port 8081
+    ports:
+      - "8092:8081"
+    depends_on:
+      - spark-master
+    volumes:
+      - .:/app
+      - ivy-cache:/root/.ivy2
+
+  dask-scheduler:
+    build: ./dask
+    image: lifemap-dask
+    container_name: lifemap_dask_scheduler
+    command: dask scheduler --port 8786 --dashboard-address :8787
+    ports:
+      - "8797:8787"
+
+  dask-worker-1:
+    build: ./dask
+    image: lifemap-dask
+    container_name: lifemap_dask_worker_1
+    command: dask worker tcp://dask-scheduler:8786 --nworkers 1 --nthreads 2 --memory-limit 2GB
+    depends_on:
+      - dask-scheduler
+
+  dask-worker-2:
+    build: ./dask
+    image: lifemap-dask
+    container_name: lifemap_dask_worker_2
+    command: dask worker tcp://dask-scheduler:8786 --nworkers 1 --nthreads 2 --memory-limit 2GB
+    depends_on:
+      - dask-scheduler
+
+volumes:
+  mongo_data:
+  ivy-cache:
+
+networks:
+  default:
+    name: lifemap_network

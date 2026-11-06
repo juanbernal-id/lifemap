@@ -1,0 +1,7 @@
+dask[complete]==2024.8.0
+pandas==2.2.2
+pymongo==4.8.0
+python-dotenv==1.0.1
+kaggle==1.6.17
+flask==3.0.3
+scikit-learn==1.5.1

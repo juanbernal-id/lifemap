@@ -1,1 +1,0 @@
-{"class":"org.apache.spark.ml.feature.StringIndexerModel","timestamp":1793985597643,"sparkVersion":"3.5.1","uid":"StringIndexer_ab04540b2944","paramMap":{"outputCol":"label","inputCol":"sentimiento_estrellas"},"defaultParamMap":{"outputCol":"StringIndexer_ab04540b2944__output","stringOrderType":"frequencyDesc","handleInvalid":"error"}}

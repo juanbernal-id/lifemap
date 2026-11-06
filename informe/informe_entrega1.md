@@ -3,7 +3,7 @@
 **Curso:** Big Data · IUE · 2026-2
 **Área metropolitana:** Tampa · **Categoría:** Restaurants
 **Equipo:** Juan Pablo Bernal Echeverry
-**Repositorio:** (pegar URL de GitHub)
+**Repositorio:** https://github.com/juanbernal-id/lifemap
 **URL desplegada:** https://diagram-located-derby-cases.trycloudflare.com (registrada 2026-11-06 12:41 hora Bogotá / 17:41 UTC)
 
 

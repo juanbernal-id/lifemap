@@ -5,14 +5,14 @@ services:
     ports:
       - "8090:8080"
     volumes:
-      - jenkins_home:/var/jenkins_home
+      - lifemap_jenkins_home:/var/jenkins_home
       - /var/run/docker.sock:/var/run/docker.sock
       - /Users/juan-bernal/Desktop/workspace/lifemap:/Users/juan-bernal/Desktop/workspace/lifemap
     group_add:
       - "0"
 
 volumes:
-  jenkins_home:
+  lifemap_jenkins_home:
 
 networks:
   default:

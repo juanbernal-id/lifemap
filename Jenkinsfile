@@ -1,5 +1,10 @@
 pipeline {
-    agent any
+    agent {
+        node {
+            label ''
+            customWorkspace '/Users/juan-bernal/Desktop/workspace/lifemap'
+        }
+    }
 
     triggers {
         pollSCM('H/2 * * * *')  // sin webhook publico: Jenkins no es alcanzable desde GitHub

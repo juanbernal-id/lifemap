@@ -4,7 +4,7 @@
 **Área metropolitana:** Tampa · **Categoría:** Restaurants
 **Equipo:** Juan Pablo Bernal Echeverry
 **Repositorio:** (pegar URL de GitHub)
-**URL desplegada:** (pegar URL del túnel, con fecha/hora en que se registró)
+**URL desplegada:** https://diagram-located-derby-cases.trycloudflare.com (registrada 2026-11-06 12:41 hora Bogotá / 17:41 UTC)
 
 > NOTA: completar cada sección con las cifras y capturas reales una vez
 > corridos los pasos del README. Los placeholders están marcados con `[ ]`.

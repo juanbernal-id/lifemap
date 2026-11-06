@@ -57,7 +57,7 @@ Sin servidor en la nube, se usa un túnel desde el portátil:
 # opción más rápida, sin cuenta:
 cloudflared tunnel --url http://localhost:5051
 ```
-Registrar la URL que imprime en este README antes de la sustentación.
+URL registrada: **https://diagram-located-derby-cases.trycloudflare.com** (2026-11-06, ventana corta antes de la entrega del 7 nov).
 Nota: no alcanza a cumplir el "responde desde 48h antes" al 100%, pero sí
 responderá durante la ventana de evaluación — se documenta la limitación
 en el informe.

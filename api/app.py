@@ -233,6 +233,7 @@ def zones_summary():
                 "estrellas_promedio": {"$avg": "$stars"},
                 "cierres": {"$sum": "$evento"},
                 "dias_negocio_total": {"$sum": "$dias_negocio"},
+                "ids": {"$push": "$business_id"},
             }
         },
     ]
@@ -247,13 +248,47 @@ def zones_summary():
         if r["dias_negocio_total"] else None
     )
 
+    sentimiento = resumen_sentimiento(r["ids"])
+
     return jsonify({
         "centro": {"lat": lat, "lon": lon},
         "radio_km": radio_km,
         "negocios": r["negocios"],
         "estrellas_promedio": round(r["estrellas_promedio"], 2) if r["estrellas_promedio"] else None,
         "tasa_cierre_pct": round(tasa_cierre, 2) if tasa_cierre is not None else None,
+        "sentimiento": sentimiento,
     })
+
+
+PUNTAJE_SENTIMIENTO = {"positivo": 1, "neutral": 0, "negativo": -1}
+
+
+def resumen_sentimiento(business_ids):
+    """Sentimiento medio de las resenas de los negocios de la zona.
+
+    Puntaje: positivo = +1, neutral = 0, negativo = -1 (etiqueta derivada de
+    las estrellas, seccion 4 del enunciado). El medio va de -1 a +1.
+    """
+    conteos = {
+        d["_id"]: d["n"]
+        for d in db["reviews"].aggregate(
+            [
+                {"$match": {"business_id": {"$in": business_ids}}},
+                {"$group": {"_id": "$sentimiento_estrellas", "n": {"$sum": 1}}},
+            ],
+            maxTimeMS=TIMEOUT_MS,
+        )
+    }
+    total = sum(conteos.values())
+    if not total:
+        return {"resenas": 0, "sentimiento_medio": None, "pct_negativas": None}
+    medio = sum(PUNTAJE_SENTIMIENTO.get(k, 0) * n for k, n in conteos.items()) / total
+    return {
+        "resenas": total,
+        "sentimiento_medio": round(medio, 3),
+        "pct_negativas": round(conteos.get("negativo", 0) / total * 100, 2),
+        "conteo_por_clase": conteos,
+    }
 
 
 @app.route("/stats/closure")

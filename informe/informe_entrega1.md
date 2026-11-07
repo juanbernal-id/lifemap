@@ -4,7 +4,7 @@
 **Área metropolitana:** Tampa · **Categoría:** Restaurants
 **Equipo:** Juan Pablo Bernal Echeverry
 **Repositorio:** https://github.com/juanbernal-id/lifemap
-**URL desplegada:** https://diagram-located-derby-cases.trycloudflare.com (registrada 2026-11-06 12:41 hora Bogotá / 17:41 UTC)
+**URL desplegada:** https://solo-portraits-sean-belt.trycloudflare.com (registrada 2026-11-07 10:13 hora Bogotá / 15:13 UTC)
 
 
 ## 1. Arquitectura
@@ -265,7 +265,7 @@ curl -s "http://localhost:5051/stats/closure?por=categoria_principal&min_dias_ne
   con un solo comando (**probado en equipo limpio: sí** — tiempo total
   `time ./levantar.sh` ≈ **26 segundos**, con los 7 servicios en estado
   `Up`/healthy al finalizar).
-- URL pública: **https://diagram-located-derby-cases.trycloudflare.com**
+- URL pública: **https://solo-portraits-sean-belt.trycloudflare.com**
   (Cloudflare Tunnel, registrada 2026-11-06 12:41 hora Bogotá / 17:41 UTC).
 - Jenkins: pipeline con `pollSCM` (sin webhook porque Jenkins corre en el
   portátil del desarrollador, no es alcanzable desde GitHub). Historial de

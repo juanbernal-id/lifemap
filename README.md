@@ -13,6 +13,11 @@ discos), adaptadas de "foco de calor" / "disco" a "negocio".
 ### 0. Credenciales de Kaggle
 1. kaggle.com/settings → API → "Create New Token" → descarga `kaggle.json`.
 2. `mkdir -p ~/.kaggle && mv ~/Downloads/kaggle.json ~/.kaggle/ && chmod 600 ~/.kaggle/kaggle.json`
+3. Para el pipeline: en Jenkins → Administrar Jenkins → Credentials → System →
+   Global credentials → Add Credentials → tipo **Username with password**,
+   ID **`kaggle-api`**, usuario = `username` de `kaggle.json`, contraseña = `key`.
+   El stage `Ingesta (Kaggle)` del Jenkinsfile la usa para descargar el dataset
+   (se omite si `data/raw` ya lo tiene). El token nunca va en el repositorio.
 
 ### 1. Descargar y filtrar los datos (fuera de Docker, con Python local o el devcontainer)
 ```bash
@@ -57,7 +62,7 @@ Sin servidor en la nube, se usa un túnel desde el portátil:
 # opción más rápida, sin cuenta:
 cloudflared tunnel --url http://localhost:5051
 ```
-URL registrada: **https://diagram-located-derby-cases.trycloudflare.com** (2026-11-06, ventana corta antes de la entrega del 7 nov).
+URL registrada: **https://solo-portraits-sean-belt.trycloudflare.com** (relanzada 2026-11-07 10:13 hora Bogotá; la URL anterior del 2026-11-06 se cayó durante la noche).
 Nota: no alcanza a cumplir el "responde desde 48h antes" al 100%, pero sí
 responderá durante la ventana de evaluación — se documenta la limitación
 en el informe.

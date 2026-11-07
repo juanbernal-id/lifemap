@@ -1,5 +1,6 @@
 import os
 import pickle
+import socket
 from pathlib import Path
 
 from flask import Flask, jsonify, request
@@ -11,6 +12,8 @@ app = Flask(__name__)
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb://mongo:27017")
 MONGO_DB = os.environ.get("MONGO_DB", "lifemap")
 GIT_COMMIT = os.environ.get("GIT_COMMIT", "dev")
+SPARK_MASTER = (os.environ.get("SPARK_MASTER_HOST", "spark-master"), 7077)
+DASK_SCHEDULER = (os.environ.get("DASK_SCHEDULER_HOST", "dask-scheduler"), 8786)
 
 client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000)
 db = client[MONGO_DB]
@@ -100,12 +103,42 @@ def health():
     except Exception as e:
         estado_mongo = f"error: {e}"
 
+    estado_spark = consultar_spark()
+    estado_dask = consultar_dask()
+
     return jsonify({
         "status": "ok",
-        "mongo": estado_mongo,
-        "db": MONGO_DB,
         "commit": GIT_COMMIT,
+        "db": MONGO_DB,
+        "mongo": estado_mongo,
+        "servicios": {
+            "api": "ok",
+            "mongo": estado_mongo,
+            "spark": estado_spark,
+            "dask": estado_dask,
+        },
     })
+
+
+def puerto_abierto(host_puerto, timeout=1.5):
+    """True si el servicio acepta conexiones TCP en su puerto (esta vivo)."""
+    try:
+        with socket.create_connection(host_puerto, timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def consultar_spark():
+    """Spark master: acepta conexiones en el puerto del cluster (7077)."""
+    host, puerto = SPARK_MASTER
+    return "activo" if puerto_abierto(SPARK_MASTER) else f"sin respuesta en {host}:{puerto}"
+
+
+def consultar_dask():
+    """Dask scheduler: acepta conexiones en su puerto (8786)."""
+    host, puerto = DASK_SCHEDULER
+    return "activo" if puerto_abierto(DASK_SCHEDULER) else f"sin respuesta en {host}:{puerto}"
 
 
 @app.route("/businesses/near")

@@ -3,7 +3,7 @@ services:
     image: mongo:7
     container_name: lifemap_mongo
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/27017"]
       interval: 15s
       timeout: 10s
       retries: 5

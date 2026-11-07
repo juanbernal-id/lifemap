@@ -64,6 +64,20 @@ def construir_vida_negocios(negocios, reviews):
 
     negocios = negocios.merge(agregados, on="business_id", how="inner")
 
+    # Conteo de resenas por clase de sentimiento por negocio: /zones/summary los
+    # suma por zona sin tener que recorrer la coleccion de resenas.
+    conteo_sent = (
+        reviews.groupby(["business_id", "sentimiento_estrellas"]).size()
+        .unstack(fill_value=0)
+        .rename(columns={"positivo": "resenas_pos", "neutral": "resenas_neu", "negativo": "resenas_neg"})
+        .reset_index()
+    )
+    negocios = negocios.merge(conteo_sent, on="business_id", how="left")
+    for c in ["resenas_pos", "resenas_neu", "resenas_neg"]:
+        if c not in negocios:
+            negocios[c] = 0
+        negocios[c] = negocios[c].fillna(0).astype(int)
+
     negocios["dias_negocio"] = (
         (negocios["ultima_resena"] - negocios["primera_resena"]).dt.days
     ).clip(lower=MIN_RESENAS_DIAS_NEGOCIO)

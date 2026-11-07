@@ -1,0 +1,55 @@
+{
+  "negocios": [
+    {
+      "regla": "coordenadas nulas",
+      "antes": 2967,
+      "despues": 2967,
+      "eliminados": 0,
+      "justificacion": "sin coordenadas no se puede construir el GeoJSON ni consultar por ubicacion"
+    },
+    {
+      "regla": "coordenadas fuera de rango",
+      "antes": 2967,
+      "despues": 2967,
+      "eliminados": 0,
+      "justificacion": "MongoDB rechaza puntos fuera de [-90,90]x[-180,180] en el indice 2dsphere"
+    },
+    {
+      "regla": "business_id duplicado",
+      "antes": 2967,
+      "despues": 2967,
+      "eliminados": 0,
+      "justificacion": "un negocio duplicado contaria doble en cierres y dias-negocio"
+    }
+  ],
+  "resenas": [
+    {
+      "regla": "sin texto (nulo o vacio)",
+      "antes": 303691,
+      "despues": 303691,
+      "eliminados": 0,
+      "justificacion": "el modelo de sentimiento necesita texto"
+    },
+    {
+      "regla": "fecha nula o invalida",
+      "antes": 303691,
+      "despues": 303691,
+      "eliminados": 0,
+      "justificacion": "la fecha define la vida del negocio (primera y ultima resena)"
+    },
+    {
+      "regla": "sin business_id",
+      "antes": 303691,
+      "despues": 303691,
+      "eliminados": 0,
+      "justificacion": "sin negocio no se puede unir resena-negocio"
+    },
+    {
+      "regla": "review_id duplicado",
+      "antes": 303691,
+      "despues": 303691,
+      "eliminados": 0,
+      "justificacion": "una resena duplicada sesga el sentimiento y la linea de tiempo"
+    }
+  ]
+}

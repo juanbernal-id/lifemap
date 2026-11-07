@@ -233,7 +233,9 @@ def zones_summary():
                 "estrellas_promedio": {"$avg": "$stars"},
                 "cierres": {"$sum": "$evento"},
                 "dias_negocio_total": {"$sum": "$dias_negocio"},
-                "ids": {"$push": "$business_id"},
+                "resenas_pos": {"$sum": "$resenas_pos"},
+                "resenas_neu": {"$sum": "$resenas_neu"},
+                "resenas_neg": {"$sum": "$resenas_neg"},
             }
         },
     ]
@@ -248,7 +250,11 @@ def zones_summary():
         if r["dias_negocio_total"] else None
     )
 
-    sentimiento = resumen_sentimiento(r["ids"])
+    sentimiento = resumen_sentimiento({
+        "positivo": r.get("resenas_pos") or 0,
+        "neutral": r.get("resenas_neu") or 0,
+        "negativo": r.get("resenas_neg") or 0,
+    })
 
     return jsonify({
         "centro": {"lat": lat, "lon": lon},
@@ -263,22 +269,14 @@ def zones_summary():
 PUNTAJE_SENTIMIENTO = {"positivo": 1, "neutral": 0, "negativo": -1}
 
 
-def resumen_sentimiento(business_ids):
+def resumen_sentimiento(conteos):
     """Sentimiento medio de las resenas de los negocios de la zona.
 
-    Puntaje: positivo = +1, neutral = 0, negativo = -1 (etiqueta derivada de
-    las estrellas, seccion 4 del enunciado). El medio va de -1 a +1.
+    Los conteos por clase estan precalculados en cada negocio (resenas_pos,
+    resenas_neu, resenas_neg) a partir de la etiqueta derivada de las estrellas
+    (seccion 4 del enunciado). Puntaje: positivo = +1, neutral = 0,
+    negativo = -1; el medio va de -1 a +1.
     """
-    conteos = {
-        d["_id"]: d["n"]
-        for d in db["reviews"].aggregate(
-            [
-                {"$match": {"business_id": {"$in": business_ids}}},
-                {"$group": {"_id": "$sentimiento_estrellas", "n": {"$sum": 1}}},
-            ],
-            maxTimeMS=TIMEOUT_MS,
-        )
-    }
     total = sum(conteos.values())
     if not total:
         return {"resenas": 0, "sentimiento_medio": None, "pct_negativas": None}

@@ -44,8 +44,25 @@ los discos?"), adaptadas de foco de calor / disco a negocio.
   (filtro por área Tampa + categoría Restaurants + coordenadas válidas).
 - Total de reseñas leídas / conservadas: **6,990,280 leídas → 303,691 conservadas**
   (reseñas de los 2,967 negocios conservados, con texto y fecha válida).
-- Se descartan negocios sin coordenadas válidas o fuera de rango.
-- Se descartan reseñas sin texto o sin fecha válida.
+- Conteos antes/después de cada regla (`ingesta/conteos_limpieza.py`, lectura
+  particionada con Dask; resultado en `outputs/conteos_limpieza.json`):
+
+  | Regla | Antes | Después | Justificación |
+  |---|---|---|---|
+  | Negocios: coordenadas nulas | 2,967 | 2,967 | sin punto no hay GeoJSON |
+  | Negocios: coordenadas fuera de rango | 2,967 | 2,967 | el índice 2dsphere las rechaza |
+  | Negocios: `business_id` duplicado | 2,967 | 2,967 | contaría doble cierres y días |
+  | Reseñas: sin texto (nulo o vacío) | 303,691 | 303,691 | el modelo necesita texto |
+  | Reseñas: fecha nula o inválida | 303,691 | 303,691 | define la vida del negocio |
+  | Reseñas: sin `business_id` | 303,691 | 303,691 | no se puede unir a su negocio |
+  | Reseñas: `review_id` duplicado | 303,691 | 303,691 | sesga sentimiento y línea de tiempo |
+
+  Ninguna regla elimina registros en esta área: el Yelp Open Dataset ya viene
+  limpio. Las reglas se mantienen en `limpieza_dask.py` como protección.
+- Volumen: el archivo completo de reseñas (6,990,280) se descarga y se recorre
+  entero; la cláusula de "muestra de al menos 1,000,000" aplica solo si no se
+  puede procesar el archivo completo. El área+categoría asignada (Tampa +
+  Restaurants) tiene en total 303,691 reseñas.
 
 ## 3. Construcción de la vida de cada negocio
 
@@ -79,6 +96,17 @@ negocio aparezca en ambos lados.
 - **Naive Bayes** — F1 (macro ponderado): **0.8185** · Precision: **0.8433** · Recall: **0.8024**
 - **Regresión logística** — F1 (macro ponderado): **0.8322** · Precision: **0.8288** · Recall: **0.8362**
 - **Mejor modelo: regresión logística** (mayor F1), guardado como modelo servible.
+- Métricas por clase (calculadas de las matrices de confusión):
+
+  | Clase (soporte) | NB P / R / F1 | RL P / R / F1 |
+  |---|---|---|
+  | positivo (38,777) | 0.947 / 0.860 / 0.902 | 0.913 / 0.929 / 0.921 |
+  | negativo (10,147) | 0.731 / 0.717 / 0.724 | 0.753 / 0.763 / 0.758 |
+  | neutral (5,733) | 0.339 / 0.561 / 0.423 | 0.394 / 0.338 / 0.364 |
+
+  La regresión logística gana en positivo y negativo; Naive Bayes recupera más
+  neutrales (recall 0.56 vs 0.34) a costa de precisión. El desbalance castiga a
+  la clase minoritaria en ambos.
 - Matrices de confusión (label 0.0 = positivo, 1.0 = negativo, 2.0 = neutral,
   ordenado por frecuencia; fila = clase real, columna = predicción):
 
@@ -187,88 +215,47 @@ curl -s -X POST http://localhost:5051/predict -H "Content-Type: application/json
 }
 ```
 
-**POST /businesses/within** (GeoJSON Polygon)
-```
-curl -s -X POST http://localhost:5051/businesses/within -H "Content-Type: application/json" \
-  -d '{"poligono":{"type":"Polygon","coordinates":[[[-82.47,27.94],[-82.43,27.94],[-82.43,27.97],[-82.47,27.97],[-82.47,27.94]]]}}'
-```
-```json
-{
-  "total_en_poligono": 415,
-  "devueltos": 50,
-  "negocios": [
-    {"business_id": "sC0nPDdjkErUhoT1BAduLQ", "name": "Trinity Cafe", "stars": 5.0, "review_count": 7, "is_open": 1},
-    {"business_id": "QoezRbYQncpRqyrLH6Iqjg", "name": "La Segunda Central Bakery", "stars": 4.5, "review_count": 339, "is_open": 1}
-  ]
-}
-```
-(lista completa de 50 resultados en la respuesta real; se muestran 2 a modo de ejemplo)
+**POST /businesses/within** (GeoJSON Polygon, `$geoWithin`): polígono
+`[[-82.47,27.94],[-82.43,27.94],[-82.43,27.97],[-82.47,27.97],[-82.47,27.94]]`
+→ `{"total_en_poligono": 415, "devueltos": 50, "negocios": [...]}`.
 
-**GET /health**
-```
-curl -s http://localhost:5051/health
-```
+**GET /health** (estado de cada servicio + commit desplegado)
 ```json
-{"commit": "a44483d", "db": "lifemap", "mongo": "conectado", "status": "ok"}
+{"status":"ok","commit":"<hash de main>","servicios":
+ {"api":"ok","mongo":"conectado","spark":"activo","dask":"activo"}}
 ```
 
-**GET /businesses/near**
-```
-curl -s "http://localhost:5051/businesses/near?lon=-82.4572&lat=27.9506&radio_m=1500&limite=3"
-```
-```json
-{
-  "centro": {"lat": 27.9506, "lon": -82.4572},
-  "radio_km": 2,
-  "total_en_radio": 387,
-  "devueltos": 3,
-  "negocios": [
-    {"name": "NYO Food Truck", "stars": 3.5, "review_count": 8, "is_open": 0},
-    {"name": "Bizou Brasserie", "stars": 3.5, "review_count": 198, "is_open": 1},
-    {"name": "Cafe Perera", "stars": 4.5, "review_count": 17, "is_open": 1}
-  ]
-}
-```
+**GET /businesses/near** (`$near`) — `?lat=27.9506&lon=-82.4572&radio_km=1.5&limite=3`
+→ 310 negocios en el radio; devuelve NYO Food Truck, Bizou Brasserie, Cafe Perera.
 
-**GET /zones/summary**
-```
-curl -s "http://localhost:5051/zones/summary?lat=27.9506&lon=-82.4572&radio_m=5000&precision=5"
-```
-```json
-{
-  "centro": {"lat": 27.9506, "lon": -82.4572},
-  "radio_km": 2,
-  "negocios": 387,
-  "estrellas_promedio": 3.65,
-  "tasa_cierre_pct": 7.46
-}
-```
+**GET /zones/summary** (`$geoNear`) — `?lat=27.9506&lon=-82.4572&radio_km=2`
+→ 387 negocios, 3.65 estrellas, tasa de cierre 7.46%, 49,001 reseñas con
+sentimiento medio +0.512 (positivo = +1, neutral = 0, negativo = −1) y 18.67%
+negativas (conteos por clase precalculados en cada negocio).
 
-**GET /stats/closure**
-```
-curl -s "http://localhost:5051/stats/closure?por=categoria_principal&min_dias_negocio=365"
-```
-```json
-{
-  "agrupado_por": "categoria_principal",
-  "min_dias_negocio": 365.0,
-  "resultados": [
-    {"categoria_principal": "Senegalese", "cierres": 1, "dias_negocio": 637, "tasa_cierre_pct": 57.3},
-    {"categoria_principal": "Lebanese", "cierres": 2, "dias_negocio": 1281, "tasa_cierre_pct": 56.99}
-  ]
-}
-```
+**GET /stats/closure** — `?por=categoria_principal&min_dias_negocio=365`
+→ filas `{categoria_principal, cierres, dias_negocio, tasa_cierre_pct}`
+(Senegalese 57.3%, Lebanese 56.99%, ...).
+
+Las entradas se validan: un parámetro inválido (p. ej. `limite=abc`) responde
+400 con el motivo.
 
 ## 8. Despliegue (E1.1 – E1.3)
 
 - Orquestación: `./levantar.sh` levanta Mongo, API, Spark, Dask y Jenkins
   con un solo comando (**probado en equipo limpio: sí** — tiempo total
   `time ./levantar.sh` ≈ **26 segundos**, con los 7 servicios en estado
-  `Up`/healthy al finalizar).
+  `Up`/healthy al finalizar; cada servicio del Compose tiene `healthcheck`).
 - URL pública: **https://solo-portraits-sean-belt.trycloudflare.com**
   (Cloudflare Tunnel, registrada 2026-11-06 12:41 hora Bogotá / 17:41 UTC).
-- Jenkins: pipeline con `pollSCM` (sin webhook porque Jenkins corre en el
-  portátil del desarrollador, no es alcanzable desde GitHub). Historial de
+- Jenkins: pipeline con `pollSCM` cada 2 min (sin webhook porque Jenkins no
+  es alcanzable desde GitHub). Etapas: Checkout → Build (imágenes) → Ingesta
+  (descarga del dataset con la API de Kaggle; token como credencial de Jenkins
+  `kaggle-api`, se omite si ya está en `data/raw`) → Test (pytest contra la API:
+  /health, fórmula de la tasa de cierre, sentimiento por zona, validación) →
+  Deploy. El build #29 falló en Test (consulta de sentimiento demasiado lenta)
+  y **no desplegó**: demuestra que una prueba fallida bloquea el despliegue;
+  el #30 lo corrigió (9/9 pruebas) y desplegó. Historial de
   builds verificado: build con **FAILURE** por permisos del workspace
   (`AccessDeniedException`), seguida de **FAILURE** por configuración de
   Git (`safe.directory`), **FAILURE** por contenedores Docker "zombie" al

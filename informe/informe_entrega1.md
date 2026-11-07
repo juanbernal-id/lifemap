@@ -45,7 +45,8 @@ los discos?"), adaptadas de foco de calor / disco a negocio.
 - Total de reseñas leídas / conservadas: **6,990,280 leídas → 303,691 conservadas**
   (reseñas de los 2,967 negocios conservados, con texto y fecha válida).
 - Conteos antes/después de cada regla (`ingesta/conteos_limpieza.py`, lectura
-  particionada con Dask; resultado en `outputs/conteos_limpieza.json`):
+  particionada sobre el cluster Dask del Compose: scheduler + 2 workers;
+  resultado en `outputs/conteos_limpieza.json`):
 
   | Regla | Antes | Después | Justificación |
   |---|---|---|---|
@@ -255,7 +256,8 @@ Las entradas se validan: un parámetro inválido (p. ej. `limite=abc`) responde
   /health, fórmula de la tasa de cierre, sentimiento por zona, validación) →
   Deploy. El build #29 falló en Test (consulta de sentimiento demasiado lenta)
   y **no desplegó**: demuestra que una prueba fallida bloquea el despliegue;
-  el #30 lo corrigió (9/9 pruebas) y desplegó. Historial de
+  el #30 lo corrigió (9/9 pruebas) y desplegó. Los cambios se integran por pull request
+  (PR #1 `feature/dask-cluster`): su merge a `main` disparó el build #34. Historial de
   builds verificado: build con **FAILURE** por permisos del workspace
   (`AccessDeniedException`), seguida de **FAILURE** por configuración de
   Git (`safe.directory`), **FAILURE** por contenedores Docker "zombie" al

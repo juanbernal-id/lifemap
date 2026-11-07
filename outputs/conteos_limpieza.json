@@ -1,4 +1,5 @@
 {
+  "cluster": "tcp://dask-scheduler:8786",
   "negocios": [
     {
       "regla": "coordenadas nulas",

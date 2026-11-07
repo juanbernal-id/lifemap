@@ -73,6 +73,9 @@ services:
     build: ./dask
     image: lifemap-dask
     container_name: lifemap_dask_scheduler
+    working_dir: /app
+    volumes:
+      - .:/app
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8786), 3)"]
       interval: 15s
@@ -87,6 +90,9 @@ services:
     build: ./dask
     image: lifemap-dask
     container_name: lifemap_dask_worker_1
+    working_dir: /app
+    volumes:
+      - .:/app
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('dask-scheduler', 8786), 3)"]
       interval: 15s
@@ -101,6 +107,9 @@ services:
     build: ./dask
     image: lifemap-dask
     container_name: lifemap_dask_worker_2
+    working_dir: /app
+    volumes:
+      - .:/app
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('dask-scheduler', 8786), 3)"]
       interval: 15s

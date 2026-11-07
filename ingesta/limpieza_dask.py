@@ -11,6 +11,7 @@ from pathlib import Path
 
 import dask.dataframe as dd
 import pandas as pd
+from dask.distributed import Client
 from dotenv import load_dotenv
 from pymongo import MongoClient
 
@@ -19,7 +20,26 @@ load_dotenv()
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27018")
 MONGO_DB = os.environ.get("MONGO_DB", "lifemap")
 
-FILTRADO = Path("data/filtrado")
+FILTRADO = Path(os.environ.get("FILTRADO_DIR", "data/filtrado")).resolve()
+DASK_SCHEDULER = os.environ.get("DASK_SCHEDULER", "tcp://dask-scheduler:8786")
+TAMANO_LOTE = 10_000
+
+
+def conectar_cluster():
+    """Usa el scheduler del Compose (2 workers); si no esta, Dask local."""
+    try:
+        client = Client(DASK_SCHEDULER, timeout="10s")
+        print(f"Conectado al cluster Dask {DASK_SCHEDULER} "
+              f"({len(client.scheduler_info()['workers'])} workers)")
+        return client
+    except Exception as e:
+        print(f"Sin cluster Dask ({type(e).__name__}); se usa el planificador local")
+        return None
+
+
+def insertar_por_lotes(coleccion, registros):
+    for i in range(0, len(registros), TAMANO_LOTE):
+        coleccion.insert_many(registros[i:i + TAMANO_LOTE])
 MIN_RESENAS_DIAS_NEGOCIO = 1  # evita negocios con 0 dias-negocio
 
 
@@ -107,6 +127,7 @@ def a_geojson(negocios):
 
 
 def main():
+    conectar_cluster()
     print("Cargando negocios y reseñas filtrados con Dask...")
     negocios = cargar_negocios_crudos()
     reviews = cargar_reviews_crudas()
@@ -124,8 +145,8 @@ def main():
     db["negocios"].drop()
     db["reviews"].drop()
 
-    db["negocios"].insert_many(negocios.to_dict("records"))
-    db["reviews"].insert_many(reviews_out.to_dict("records"))
+    insertar_por_lotes(db["negocios"], negocios.to_dict("records"))
+    insertar_por_lotes(db["reviews"], reviews_out.to_dict("records"))
 
     db["negocios"].create_index([("location", "2dsphere")])
     db["negocios"].create_index("categories")

@@ -10,11 +10,26 @@ Uso (dentro de la imagen de Dask, montando el repo):
     docker run --rm -v "$PWD":/app -w /app lifemap-dask python ingesta/conteos_limpieza.py
 """
 import json
+import os
 from pathlib import Path
 
 import dask.dataframe as dd
+from dask.distributed import Client
 
-FILTRADO = Path("data/filtrado")
+FILTRADO = Path(os.environ.get("FILTRADO_DIR", "data/filtrado")).resolve()
+DASK_SCHEDULER = os.environ.get("DASK_SCHEDULER", "tcp://dask-scheduler:8786")
+
+
+def conectar_cluster():
+    """Usa el scheduler del Compose (2 workers); si no esta, Dask local."""
+    try:
+        client = Client(DASK_SCHEDULER, timeout="10s")
+        workers = len(client.scheduler_info()["workers"])
+        print(f"Conectado al cluster Dask {DASK_SCHEDULER} ({workers} workers)")
+        return client
+    except Exception as e:
+        print(f"Sin cluster Dask ({type(e).__name__}); se usa el planificador local")
+        return None
 BLOQUE = "64MB"  # lectura particionada
 
 
@@ -29,7 +44,8 @@ def aplicar(nombre, ddf, filtro, pasos, justificacion):
 
 
 def main():
-    resultado = {}
+    client = conectar_cluster()
+    resultado = {"cluster": DASK_SCHEDULER if client else "local"}
 
     print("Negocios (data/filtrado/negocios.jsonl):")
     neg = dd.read_json(str(FILTRADO / "negocios.jsonl"), lines=True, blocksize=BLOQUE, dtype=False, convert_dates=False)

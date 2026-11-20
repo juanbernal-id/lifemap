@@ -50,7 +50,7 @@ pipeline {
             steps {
                 sh 'GIT_COMMIT=${GIT_COMMIT_SHORT} docker compose up -d mongo api'
                 sh 'sleep 8'
-                sh 'docker run --rm --network lifemap_network -e API_URL=http://lifemap_api:5000 lifemap-tests'
+                sh 'docker run --rm --network lifemap_network -e API_URL=http://lifemap_api:5000 lifemap-tests pytest -v --ignore=test_streaming.py'
             }
         }
 

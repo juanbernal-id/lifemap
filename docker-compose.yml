@@ -120,6 +120,56 @@ services:
     depends_on:
       - dask-scheduler
 
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: lifemap_kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      CLUSTER_ID: MINlKI0cRWmCg6SoaG9new
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 20s
+
+  kafka-init:
+    image: apache/kafka:3.8.0
+    container_name: lifemap_kafka_init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 \
+          --create --if-not-exists --topic reviews --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --describe --topic reviews
+    restart: "no"
+
+  productor:
+    build: ./streaming
+    container_name: lifemap_productor
+    profiles: ["streaming"]
+    environment:
+      - MONGO_URI=mongodb://mongo:27017
+      - MONGO_DB=lifemap
+      - KAFKA_BOOTSTRAP=kafka:9092
+      - KAFKA_TOPIC=reviews
+      - FECHA_CORTE_T=${FECHA_CORTE_T:-2021-01-01T00:00:00+00:00}
+      - SEGUNDOS_POR_MES=${SEGUNDOS_POR_MES:-10}
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+
 volumes:
   mongo_data:
   ivy-cache:

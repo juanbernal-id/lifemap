@@ -1,4 +1,4 @@
-# LifeMap — Entrega 1 (reputación, ubicación y supervivencia de negocios)
+# LifeMap — reputación, ubicación y supervivencia de negocios (Entrega 1 + Entrega 2)
 
 Curso Big Data · IUE · 2026-2. Área: **Tampa** · Categoría: **Restaurants**
 (confirmar con el profe que no se repite con otro equipo).
@@ -82,3 +82,72 @@ desde GitHub).
 - Modelo de sentimiento entrenado con Spark MLlib (no existe "SentimentStream"
   de un semestre anterior para este equipo); se exporta además una versión
   sklearn equivalente para servir `/predict` sin levantar Spark por request.
+
+
+## Entrega 2 — streaming, supervivencia y alerta temprana de cierre
+
+Fecha de corte **T = 2021-01-01**: reseñas con `date < T` se usan para
+entrenar (sentimiento, riesgo); reseñas con `date >= T` se reservan y las
+reproduce el productor como si llegaran en vivo (~33.800 reseñas, hasta
+2022-01-19, fin del dataset). Se cambia con la variable `FECHA_CORTE_T`
+(formato ISO con offset, ej. `2021-01-01T00:00:00+00:00`).
+
+### 8. Entrenar el modelo de riesgo y las curvas de supervivencia
+Con la plataforma de la Entrega 1 ya corriendo (`./levantar.sh`):
+```bash
+docker run --rm --network lifemap_network -v "$PWD":/app -w /app \
+    -e MONGO_URI=mongodb://mongo:27017 lifemap-spark python spark_jobs/riesgo_cierre.py
+
+docker run --rm --network lifemap_network -v "$PWD":/app -w /app \
+    -e MONGO_URI=mongodb://mongo:27017 lifemap-spark python spark_jobs/supervivencia.py
+```
+`riesgo_cierre.py` deja `outputs/modelo_riesgo.pkl` + `outputs/metricas_riesgo.json`,
+y guarda un snapshot de features por negocio en `negocios.riesgo_features_t`
+(lo que usan las alertas en vivo para no recalcular todo en cada reseña).
+
+### 9. Kafka + demo de streaming
+```bash
+docker compose up -d kafka kafka-init spark-master spark-worker
+
+# consumidor (dos queries: inferencia+alertas, y ventanas/hotspots) - queda corriendo
+docker compose exec -it spark-master spark-submit --master spark://spark-master:7077 \
+    spark_jobs/streaming_consumidor.py
+
+# en otra terminal, el productor con reloj acelerado (1 mes de dataset cada 10s)
+docker compose --profile streaming up productor
+```
+Mientras el productor corre, se puede ver en vivo:
+```bash
+curl http://localhost:5051/streaming/estado
+curl "http://localhost:5051/live/hotspots"
+curl "http://localhost:5051/alerts?lat=27.95&lon=-82.46&radio_km=5"
+curl "http://localhost:5051/risk/near?lat=27.95&lon=-82.46&radio_km=2"
+curl "http://localhost:5051/survival/Restaurants"
+```
+`/health` ahora también reporta Kafka y el retraso (lag) del consumidor.
+
+### 10. Dashboard en Power BI
+Se arma en un PC con Power BI Desktop (no en la Mac), conectado a la URL
+pública de la API — Power Query → "Obtener datos" → Web → pegar cada URL de
+arriba (`Json.Document(Web.Contents("..."))`), actualizar periódicamente
+durante la demo. Las 4 vistas mínimas: mapa de hotspots (`/live/hotspots`),
+tabla de alertas (`/alerts`), curvas de supervivencia (`/survival/<categoria>`)
+y evolución del % negativo (histórico de `ventanas_geohash`, agrupado por
+`ventana_inicio`).
+
+## Limitaciones documentadas — Entrega 2
+- El modelo de sentimiento de la Entrega 1 ya se entrenó con el dataset
+  completo (incluyendo lo que ahora, retroactivamente, es "posterior a T").
+  No se reentrena para separar eso, porque la Entrega 1 ya fue calificada;
+  la fuga que esto implica es solo para la clasificación de texto, no para
+  el modelo de riesgo (E2.6), cuyas variables sí se calculan exclusivamente
+  con datos `<= T`.
+- Densidad de competidores y tendencia de 6 meses quedan fijas al snapshot
+  de entrenamiento (`riesgo_features_t`); las alertas en vivo solo actualizan
+  sentimiento medio y conteo de reseñas en tiempo real, no recalculan
+  densidad geoespacial ni tendencia en cada micro-lote (quedaría muy costoso
+  para el tiempo disponible). Se documenta como simplificación en el informe.
+- Las curvas de supervivencia por entrada tardía no estiman un tiempo exacto
+  de entrada (el dataset no trae fecha de apertura): se reporta la curva con
+  todos los negocios y otra excluyendo los de entrada tardía, en vez de
+  inventar una fecha de entrada.

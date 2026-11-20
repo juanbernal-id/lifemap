@@ -5,3 +5,7 @@ __pycache__/
 *.pyc
 .devcontainer_history
 *.bak
+
+outputs/checkpoints/
+consumidor.log
+

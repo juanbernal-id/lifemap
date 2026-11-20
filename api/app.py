@@ -3,6 +3,8 @@ import pickle
 import socket
 from pathlib import Path
 
+from datetime import datetime, timezone
+
 from flask import Flask, jsonify, request
 from pymongo import MongoClient
 from pymongo.errors import OperationFailure, PyMongoError
@@ -14,10 +16,14 @@ MONGO_DB = os.environ.get("MONGO_DB", "lifemap")
 GIT_COMMIT = os.environ.get("GIT_COMMIT", "dev")
 SPARK_MASTER = (os.environ.get("SPARK_MASTER_HOST", "spark-master"), 7077)
 DASK_SCHEDULER = (os.environ.get("DASK_SCHEDULER_HOST", "dask-scheduler"), 8786)
+KAFKA_BROKER = (os.environ.get("KAFKA_BROKER_HOST", "kafka"), 9092)
 
 client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000)
 db = client[MONGO_DB]
 negocios = db["negocios"]
+ventanas_geohash = db["ventanas_geohash"]
+alerts_col = db["alerts"]
+supervivencia_categoria = db["supervivencia_categoria"]
 
 LIMITE_DEFECTO = 50
 LIMITE_MAXIMO = 500
@@ -105,6 +111,8 @@ def health():
 
     estado_spark = consultar_spark()
     estado_dask = consultar_dask()
+    estado_kafka = consultar_kafka()
+    retraso_consumidor = consultar_retraso_consumidor()
 
     return jsonify({
         "status": "ok",
@@ -116,7 +124,9 @@ def health():
             "mongo": estado_mongo,
             "spark": estado_spark,
             "dask": estado_dask,
+            "kafka": estado_kafka,
         },
+        "kafka_consumer_lag": retraso_consumidor,
     })
 
 
@@ -139,6 +149,33 @@ def consultar_dask():
     """Dask scheduler: acepta conexiones en su puerto (8786)."""
     host, puerto = DASK_SCHEDULER
     return "activo" if puerto_abierto(DASK_SCHEDULER) else f"sin respuesta en {host}:{puerto}"
+
+
+def consultar_kafka():
+    """Kafka broker: acepta conexiones en su puerto (9092)."""
+    host, puerto = KAFKA_BROKER
+    return "activo" if puerto_abierto(KAFKA_BROKER) else f"sin respuesta en {host}:{puerto}"
+
+
+def consultar_retraso_consumidor():
+    """Retraso (lag) del consumidor Structured Streaming: diferencia entre la
+    marca de procesamiento mas reciente guardada en Mongo y la hora actual.
+    Si no hay documentos (el consumidor no ha corrido o no hay trafico
+    reciente), se informa null en vez de fallar el healthcheck."""
+    try:
+        ultimo = db["streaming_predicciones"].find_one(
+            {}, {"marca_procesamiento": 1, "_id": 0}, sort=[("marca_procesamiento", -1)]
+        )
+        if not ultimo or not ultimo.get("marca_procesamiento"):
+            return None
+        from datetime import datetime, timezone
+        marca = ultimo["marca_procesamiento"]
+        if marca.tzinfo is None:
+            marca = marca.replace(tzinfo=timezone.utc)
+        segundos = (datetime.now(timezone.utc) - marca).total_seconds()
+        return round(segundos, 1)
+    except Exception:
+        return None
 
 
 @app.route("/businesses/near")
@@ -340,6 +377,210 @@ def predict():
     probabilidades = dict(zip(modelo.classes_, modelo.predict_proba([texto])[0].round(4).tolist()))
 
     return jsonify({"text": texto, "sentimiento": prediccion, "probabilidades": probabilidades})
+
+
+GEOHASH_PRECISION = 4
+
+
+def geohash_a_centro(celda):
+    lat_str, lon_str = celda.split("_")
+    return float(lat_str), float(lon_str)
+
+
+@app.route("/live/hotspots")
+def live_hotspots():
+    """E2.4/E2.8 - celdas marcadas como hotspot en su ventana mas reciente,
+    opcionalmente filtradas por radio alrededor de un punto."""
+    lat = request.args.get("lat")
+    lon = request.args.get("lon")
+    radio_km = leer_float(request.args, "radio_km", 0.1, RADIO_MAXIMO_KM, RADIO_DEFECTO_KM) if lat else None
+    solo_hotspots = request.args.get("solo_hotspots", "true").lower() != "false"
+
+    pipeline = [
+        {"$sort": {"geohash": 1, "ventana_inicio": -1}},
+        {"$group": {"_id": "$geohash", "doc": {"$first": "$$ROOT"}}},
+        {"$replaceRoot": {"newRoot": "$doc"}},
+    ]
+    if solo_hotspots:
+        pipeline.append({"$match": {"hotspot": True}})
+
+    docs = list(ventanas_geohash.aggregate(pipeline, maxTimeMS=TIMEOUT_MS))
+    for d in docs:
+        d.pop("_id", None)
+        d["centro"] = dict(zip(["lat", "lon"], geohash_a_centro(d["geohash"])))
+
+    if lat is not None and lon is not None:
+        lat_f = leer_float(request.args, "lat", -90, 90)
+        lon_f = leer_float(request.args, "lon", -180, 180)
+        docs = [
+            d for d in docs
+            if _distancia_km(lat_f, lon_f, d["centro"]["lat"], d["centro"]["lon"]) <= radio_km
+        ]
+
+    return jsonify({"total": len(docs), "umbral_hotspot_pp": UMBRAL_HOTSPOT_PP, "ventanas": docs})
+
+
+def _distancia_km(lat1, lon1, lat2, lon2):
+    from math import asin, cos, radians, sin, sqrt
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+    a = sin((lat2 - lat1) / 2) ** 2 + cos(lat1) * cos(lat2) * sin((lon2 - lon1) / 2) ** 2
+    return 2 * RADIO_TIERRA_KM * asin(sqrt(a))
+
+
+@app.route("/alerts")
+def alerts_get():
+    """E2.7/E2.8 - alertas activas por radio."""
+    lat = leer_float(request.args, "lat", -90, 90)
+    lon = leer_float(request.args, "lon", -180, 180)
+    radio_km = leer_float(request.args, "radio_km", 0.1, RADIO_MAXIMO_KM, RADIO_DEFECTO_KM)
+
+    filtro = {
+        "location": {"$geoWithin": {"$centerSphere": [[lon, lat], radio_km / RADIO_TIERRA_KM]}},
+    }
+    docs = [
+        {k: v for k, v in d.items() if k != "_id"}
+        for d in alerts_col.find(filtro, maxTimeMS=TIMEOUT_MS).sort("probabilidad_cierre", -1)
+    ]
+    return jsonify({"centro": {"lat": lat, "lon": lon}, "radio_km": radio_km, "total": len(docs), "alertas": docs})
+
+
+@app.route("/alerts", methods=["POST"])
+def alerts_post():
+    """Mismo endpoint, por poligono GeoJSON en vez de radio."""
+    cuerpo = request.get_json(silent=True)
+    if not isinstance(cuerpo, dict):
+        raise ParametroInvalido("El cuerpo debe ser un JSON con la clave 'poligono'")
+    poligono = cuerpo.get("poligono")
+    validar_poligono(poligono)
+
+    try:
+        docs = [
+            {k: v for k, v in d.items() if k != "_id"}
+            for d in alerts_col.find(
+                {"location": {"$geoWithin": {"$geometry": poligono}}}, maxTimeMS=TIMEOUT_MS
+            ).sort("probabilidad_cierre", -1)
+        ]
+    except OperationFailure as e:
+        app.logger.error("Poligono rechazado por MongoDB: %s", e)
+        raise ParametroInvalido("MongoDB rechazo el poligono (revisa coordenadas y orden [lon, lat])")
+
+    return jsonify({"total": len(docs), "alertas": docs})
+
+
+@app.route("/survival/<categoria>")
+def survival_categoria(categoria):
+    """E2.5/E2.8 - curva de Kaplan-Meier por categoria principal."""
+    doc = supervivencia_categoria.find_one(
+        {"categoria_principal": {"$regex": f"^{categoria}$", "$options": "i"}}, {"_id": 0}
+    )
+    if not doc:
+        raise ParametroInvalido(
+            f"No hay curva de supervivencia para la categoria '{categoria}' "
+            "(no existe o no alcanza el minimo de negocios del grupo)"
+        )
+    return jsonify(doc)
+
+
+UMBRAL_HOTSPOT_PP = 15
+
+
+_modelo_riesgo = None
+
+
+def cargar_modelo_riesgo():
+    global _modelo_riesgo
+    if _modelo_riesgo is None:
+        ruta = Path("/app/outputs/modelo_riesgo.pkl")
+        if not ruta.exists():
+            raise ParametroInvalido(
+                "El modelo de riesgo todavia no se ha entrenado "
+                "(corre spark_jobs/riesgo_cierre.py primero)"
+            )
+        with open(ruta, "rb") as f:
+            _modelo_riesgo = pickle.load(f)
+    return _modelo_riesgo
+
+
+@app.route("/risk/near")
+def risk_near():
+    """E2.6/E2.8 - puntua con el modelo de riesgo los negocios alrededor de un
+    punto ($geoNear), incluyendo lo que han actualizado las alertas en vivo."""
+    lat = leer_float(request.args, "lat", -90, 90)
+    lon = leer_float(request.args, "lon", -180, 180)
+    radio_km = leer_float(request.args, "radio_km", 0.1, RADIO_MAXIMO_KM, RADIO_DEFECTO_KM)
+    limite = leer_limite(request.args)
+    categoria = request.args.get("categoria")
+
+    modelo_riesgo = cargar_modelo_riesgo()
+
+    pipeline = [
+        {"$geoNear": {
+            "near": {"type": "Point", "coordinates": [lon, lat]},
+            "distanceField": "distancia_m",
+            "maxDistance": radio_km * 1000,
+            "spherical": True,
+            "key": "location",
+        }},
+        {"$match": {"riesgo_features_t": {"$exists": True}}},
+    ]
+    if categoria:
+        pipeline.append({"$match": {"categories": {"$regex": categoria, "$options": "i"}}})
+    pipeline.append({"$limit": limite})
+
+    resultados = []
+    for d in negocios.aggregate(pipeline, maxTimeMS=TIMEOUT_MS):
+        ft = d["riesgo_features_t"]
+        num_stream = d.get("num_resenas_stream", 0)
+        suma_stream = d.get("suma_puntajes_stream", 0.0)
+        num_total = ft["num_resenas_hasta_t"] + num_stream
+        suma_total = ft["sentimiento_medio_hasta_t"] * ft["num_resenas_hasta_t"] + suma_stream
+        sentimiento_actualizado = suma_total / num_total if num_total else 0.0
+
+        fila = [[
+            sentimiento_actualizado,
+            ft["tendencia_pct_negativo_6m"],
+            ft["stars"],
+            num_total,
+            ft["edad_dias_hasta_t"],
+            ft["densidad_competidores_500m"],
+        ]]
+        probabilidad = float(modelo_riesgo["modelo"].predict_proba(fila)[0][1])
+
+        resultados.append({
+            "business_id": d["business_id"],
+            "name": d.get("name"),
+            "distancia_m": round(d["distancia_m"], 1),
+            "probabilidad_cierre": round(probabilidad, 4),
+            "sentimiento_actualizado": round(sentimiento_actualizado, 4),
+            "resenas_desde_t": num_total,
+        })
+
+    resultados.sort(key=lambda r: r["probabilidad_cierre"], reverse=True)
+    return jsonify({"centro": {"lat": lat, "lon": lon}, "radio_km": radio_km, "total": len(resultados),
+                     "umbral_alerta": modelo_riesgo["umbral"], "negocios": resultados})
+
+
+def _hash_modelo_sentimiento():
+    import hashlib
+    ruta = Path("/app/outputs/modelo_sentimiento/metadata/part-00000")
+    if not ruta.exists():
+        return None
+    return hashlib.sha256(ruta.read_bytes()).hexdigest()
+
+
+@app.route("/streaming/estado")
+def streaming_estado():
+    """Para la prueba de humo de Jenkins (E2.9): confirma que el consumidor
+    de streaming cargo el modelo versionado (no uno reentrenado) y que ya
+    escribio predicciones en MongoDB."""
+    meta = db["streaming_meta"].find_one({"_id": "consumidor"}, {"_id": 0})
+    return jsonify({
+        "predicciones_totales": db["streaming_predicciones"].count_documents({}),
+        "alertas_totales": alerts_col.count_documents({}),
+        "modelo_hash_api": _hash_modelo_sentimiento(),
+        "modelo_hash_consumidor": meta.get("modelo_hash") if meta else None,
+        "consumidor_arrancado": meta.get("arrancado") if meta else None,
+    })
 
 
 if __name__ == "__main__":

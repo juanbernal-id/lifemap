@@ -1,0 +1,28 @@
+{
+  "fecha_corte_t": "2021-01-01T00:00:00+00:00",
+  "umbral": 0.15,
+  "n_train": 1406,
+  "n_test": 344,
+  "tasa_positivos": 0.0429,
+  "auc_roc": 0.6065,
+  "auc_pr": 0.0565,
+  "recall": 0.8,
+  "matriz_confusion": [
+    [
+      118,
+      211
+    ],
+    [
+      3,
+      12
+    ]
+  ],
+  "importancia_variables": {
+    "sentimiento_medio_hasta_t": 0.2153,
+    "tendencia_pct_negativo_6m": 0.177,
+    "stars": 0.0573,
+    "num_resenas_hasta_t": 0.191,
+    "edad_dias_hasta_t": 0.1865,
+    "densidad_competidores_500m": 0.1729
+  }
+}

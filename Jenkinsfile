@@ -54,6 +54,46 @@ pipeline {
             }
         }
 
+        stage('Prueba de streaming (E2.9)') {
+            // Prueba de humo: el productor publica un lote chico y rapido,
+            // el consumidor corre con un timeout corto, y se verifica por la
+            // API que las predicciones llegaron a Mongo con el modelo
+            // versionado (no reentrenado). Si algo de esto falla, no se
+            // despliega (igual que con pytest en la etapa Test).
+            steps {
+                sh 'GIT_COMMIT=${GIT_COMMIT_SHORT} docker compose up -d kafka kafka-init spark-master spark-worker'
+                sh '''
+                    for i in $(seq 1 20); do
+                        docker compose ps kafka | grep -q healthy && break
+                        sleep 3
+                    done
+                '''
+                sh '''
+                    timeout 90 docker run --rm --network lifemap_network \
+                        -v "$WORKSPACE":/app -w /app \
+                        -e MONGO_URI=mongodb://mongo:27017 -e SPARK_MASTER=spark://spark-master:7077 \
+                        lifemap-spark spark-submit --master spark://spark-master:7077 \
+                        spark_jobs/streaming_consumidor.py > streaming_consumidor.log 2>&1 &
+                    echo $! > consumidor.pid
+                '''
+                sh 'sleep 20'  // tiempo para que el consumidor arranque las dos queries
+                sh '''
+                    docker compose run --rm \
+                        -e MONGO_URI=mongodb://mongo:27017 -e KAFKA_BOOTSTRAP=kafka:9092 \
+                        -e LIMITE_MENSAJES=80 -e SEGUNDOS_POR_MES=0 \
+                        productor
+                '''
+                sh 'sleep 25'  // tiempo para que el consumidor procese el lote
+                sh 'docker run --rm --network lifemap_network -e API_URL=http://lifemap_api:5000 -e MIN_PREDICCIONES_ESPERADAS=50 lifemap-tests pytest -v test_streaming.py'
+            }
+            post {
+                always {
+                    sh 'kill $(cat consumidor.pid) 2>/dev/null || true'
+                    sh 'cat streaming_consumidor.log || true'
+                }
+            }
+        }
+
         stage('Deploy') {
             steps {
                 sh 'GIT_COMMIT=${GIT_COMMIT_SHORT} docker compose up -d --build'

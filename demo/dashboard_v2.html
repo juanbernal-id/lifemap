@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LifeMap — Dashboard en vivo (Tampa)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root{
+    --bg:#f6f4ef; --panel:#ffffff; --ink:#1c2420; --ink-soft:#5b6460;
+    --line:#e1ddd2; --accent:#1f6f54; --accent-soft:#dcefe6;
+    --warn:#b4541f; --warn-soft:#f6e6dc; --crit:#a6303a; --crit-soft:#f6dde0;
+    --chip:#eef0ea;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%; margin:0}
+  body{background:var(--bg); color:var(--ink); font-family:'Inter',system-ui,sans-serif; display:flex; flex-direction:column}
+  h1,h3{font-family:'Space Grotesk',system-ui,sans-serif; margin:0}
+  .topbar{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:12px 18px; border-bottom:1px solid var(--line); background:var(--panel)}
+  .brand{display:flex; align-items:baseline; gap:10px}
+  .brand h1{font-size:1.3rem}
+  .brand span{color:var(--ink-soft); font-size:.82rem}
+  .badgerow{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+  .badge{display:inline-flex; align-items:center; gap:6px; font-size:.72rem; padding:4px 10px; border-radius:999px; white-space:nowrap}
+  .badge::before{content:""; width:7px; height:7px; border-radius:50%; background:currentColor}
+  .badge.live{background:var(--accent-soft); color:var(--accent)}
+  .badge.sample{background:var(--warn-soft); color:var(--warn)}
+  .btn{font-size:.72rem; padding:4px 10px; border-radius:999px; border:1px solid var(--line); background:var(--panel); color:var(--ink); cursor:pointer}
+  .wrap{flex:1; display:grid; grid-template-columns:minmax(0,1.5fr) minmax(340px,1fr); min-height:0}
+  @media (max-width:900px){ .wrap{grid-template-columns:1fr; grid-template-rows:55vh auto} }
+  #map{width:100%; height:100%}
+  .side{overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:12px; border-left:1px solid var(--line); background:var(--panel)}
+  .card{background:var(--chip); border-radius:12px; padding:12px 13px}
+  .card h3{font-size:.88rem; margin-bottom:8px; display:flex; align-items:center; justify-content:space-between; gap:8px}
+  .num{font-size:.62rem; color:var(--ink-soft); font-weight:500; margin-right:4px}
+  .metrics{display:grid; grid-template-columns:repeat(4,1fr); gap:8px}
+  .metric{background:var(--panel); border-radius:10px; padding:8px 10px}
+  .metric b{display:block; font-size:1.1rem; font-variant-numeric:tabular-nums}
+  .metric span{font-size:.64rem; color:var(--ink-soft)}
+  table{width:100%; border-collapse:collapse; font-size:.74rem}
+  th{text-align:left; color:var(--ink-soft); font-weight:500; padding:4px 6px}
+  td{padding:5px 6px; border-top:1px solid var(--line); font-variant-numeric:tabular-nums}
+  .tablewrap{max-height:210px; overflow-y:auto}
+  svg.chart{width:100%; height:150px; display:block}
+  .foot{font-size:.68rem; color:var(--ink-soft); margin-top:4px}
+  .pill{font-size:.62rem; padding:2px 7px; border-radius:999px; font-weight:500}
+  .pill.live{background:var(--accent-soft); color:var(--accent)}
+  .pill.sample{background:var(--warn-soft); color:var(--warn)}
+  select{font-size:.72rem; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); padding:2px 4px}
+  .legend{position:absolute; right:12px; bottom:24px; z-index:500; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 11px; font-size:.7rem; color:var(--ink-soft); display:flex; flex-direction:column; gap:4px}
+  .legend i{display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:-1px}
+  .mapbox{position:relative; min-height:0}
+  footer{font-size:.68rem; color:var(--ink-soft); text-align:center; padding:6px}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand"><h1>LifeMap — Tampa</h1><span>Reputación, riesgo y alerta temprana de cierre</span></div>
+  <div class="badgerow">
+    <span class="badge sample" id="apiBadge">conectando a la API…</span>
+    <span class="badge sample" id="mapBadge">mapa: cargando…</span>
+    <span style="font-size:.7rem; color:var(--ink-soft)" id="lastUpdate"></span>
+    <button class="btn" id="nextMapBtn">cambiar mapa</button>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="mapbox">
+    <div id="map"></div>
+    <div class="legend">
+      <div><b style="color:var(--ink)">1 · Mapa de hotspots</b></div>
+      <div><i style="background:#1f6f54"></i>Negocio, riesgo bajo</div>
+      <div><i style="background:#b4541f"></i>Riesgo medio</div>
+      <div><i style="background:#a6303a"></i>Riesgo ≥ umbral (alerta)</div>
+      <div><i style="background:#a6303a; opacity:.3"></i>Celda geohash hotspot</div>
+      <div><i style="background:#b4541f; opacity:.25"></i>Celda con reseñas (sin hotspot)</div>
+    </div>
+  </div>
+  <div class="side">
+    <div class="card">
+      <h3>Estado del flujo <span class="pill sample" id="pillEstado">ejemplo</span></h3>
+      <div class="metrics">
+        <div class="metric"><b id="mPred">—</b><span>Reseñas clasificadas en streaming</span></div>
+        <div class="metric"><b id="mAlert">—</b><span>Alertas activas</span></div>
+        <div class="metric"><b>0.61</b><span>AUC-ROC riesgo</span></div>
+        <div class="metric"><b>0.80</b><span>Recall @ 0.15</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3><span><span class="num">2 ·</span>Tabla de alertas activas</span> <span class="pill sample" id="pillAlerts">ejemplo</span></h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Negocio</th><th>Categoría</th><th>Prob. cierre</th><th>Fecha</th></tr></thead>
+          <tbody id="alertBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3><span><span class="num">3 ·</span>Curvas de supervivencia (Kaplan-Meier)</span>
+        <span style="display:flex; gap:6px; align-items:center"><select id="catSelect"><option>Restaurants</option></select><span class="pill sample" id="pillSurvival">ejemplo</span></span>
+      </h3>
+      <svg class="chart" id="survivalSvg" viewBox="0 0 340 150" role="img" aria-label="Curva de supervivencia"></svg>
+      <div class="foot" id="survivalFoot">—</div>
+    </div>
+
+    <div class="card">
+      <h3><span><span class="num">4 ·</span>Evolución del % de reseñas negativas</span> <span class="pill sample" id="pillTrend">ejemplo</span></h3>
+      <svg class="chart" id="trendSvg" viewBox="0 0 340 150" role="img" aria-label="Evolución del porcentaje de reseñas negativas por ventana de 30 días"></svg>
+      <div class="foot" id="trendFoot">Ventanas de 30 días por fecha de la reseña (tiempo del evento)</div>
+    </div>
+  </div>
+</div>
+<footer>LifeMap · Entrega 2 · Big Data IUE — conectado a <code id="apiUrlLabel"></code>, se actualiza cada 10 s. Si la API no responde, cada panel muestra datos de ejemplo marcados en naranja.</footer>
+
+<script>
+const API = new URLSearchParams(location.search).get("api") || "http://localhost:5051";
+document.getElementById("apiUrlLabel").textContent = API;
+const TAMPA = [27.9506, -82.4572];
+const $ = id => document.getElementById(id);
+function setPill(id, live, txt){ const p=$(id); p.textContent = txt || (live?"en vivo":"ejemplo"); p.className = "pill "+(live?"live":"sample"); }
+
+// ---------- mapa base ----------
+const map = L.map('map').setView(TAMPA, 12);
+const providers = [
+  { url:'https://maps.wikimedia.org/osm-intl/{z}/{x}/{y}.png', attribution:'&copy; OpenStreetMap, Wikimedia', name:'Wikimedia' },
+  { url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution:'&copy; OpenStreetMap', name:'OpenStreetMap' },
+  { url:'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', attribution:'&copy; OpenTopoMap', name:'OpenTopoMap' }
+];
+let pIdx = 0, baseLayer = null;
+function loadProvider(i){
+  if (baseLayer) map.removeLayer(baseLayer);
+  const p = providers[i];
+  baseLayer = L.tileLayer(p.url, { maxZoom: 19, attribution: p.attribution });
+  baseLayer.on('load', () => { $("mapBadge").textContent = "mapa: "+p.name; $("mapBadge").className="badge live"; });
+  baseLayer.addTo(map);
+}
+loadProvider(0);
+$("nextMapBtn").onclick = () => { pIdx = (pIdx+1) % providers.length; loadProvider(pIdx); };
+
+const hotspotLayer = L.layerGroup().addTo(map);
+const bizLayer = L.layerGroup().addTo(map);
+const alertLayer = L.layerGroup().addTo(map);
+let UMBRAL = 0.15;
+function riskColor(p){ if (p >= UMBRAL) return "#a6303a"; if (p >= UMBRAL*0.6) return "#b4541f"; return "#1f6f54"; }
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// ---------- llamadas ----------
+async function getJSON(path, ms){
+  const ctrl = new AbortController(); const t = setTimeout(()=>ctrl.abort(), ms||5000);
+  try { const r = await fetch(API+path, {signal:ctrl.signal}); if(!r.ok) throw new Error(r.status); return await r.json(); }
+  finally { clearTimeout(t); }
+}
+
+async function refreshHealth(){
+  try {
+    const h = await getJSON("/health", 4000);
+    const lag = h.kafka_consumer_lag;
+    let txt = "API en vivo";
+    if (lag != null) txt += lag < 120 ? ` · consumidor al día (${lag}s)` : ` · último dato hace ${Math.round(lag/3600)} h`;
+    $("apiBadge").textContent = txt; $("apiBadge").className = "badge live";
+    return true;
+  } catch(e){ $("apiBadge").textContent = "API sin conexión — mostrando ejemplo"; $("apiBadge").className = "badge sample"; return false; }
+}
+
+async function refreshEstado(){
+  try {
+    const e = await getJSON("/streaming/estado");
+    $("mPred").textContent = e.predicciones_totales.toLocaleString("es-CO");
+    $("mAlert").textContent = e.alertas_totales.toLocaleString("es-CO");
+    setPill("pillEstado", true);
+  } catch(err){ $("mPred").textContent = "80"; $("mAlert").textContent = "47"; setPill("pillEstado", false); }
+}
+
+// 1 · mapa: negocios puntuados con el modelo de riesgo + alertas + celdas de hotspot
+async function refreshMapa(){
+  try {
+    const r = await getJSON(`/risk/near?lat=${TAMPA[0]}&lon=${TAMPA[1]}&radio_km=12&limite=400`, 8000);
+    UMBRAL = r.umbral_alerta || UMBRAL;
+    bizLayer.clearLayers();
+    r.negocios.forEach(n => {
+      if (n.lat == null) return;
+      L.circleMarker([n.lat, n.lon], { radius: n.probabilidad_cierre >= UMBRAL ? 7 : 5, color:"#fff", weight:1, fillColor: riskColor(n.probabilidad_cierre), fillOpacity:.9 })
+        .bindPopup(`<b>${esc(n.name)}</b><br>prob. de cierre: <b>${(n.probabilidad_cierre*100).toFixed(1)}%</b><br>sentimiento actualizado: ${n.sentimiento_actualizado}<br>reseñas: ${n.resenas_desde_t}`)
+        .addTo(bizLayer);
+    });
+  } catch(e){ if (!bizLayer.getLayers().length) drawSampleBiz(); }
+
+  try {
+    const h = await getJSON(`/live/hotspots?lat=${TAMPA[0]}&lon=${TAMPA[1]}&radio_km=40&solo_hotspots=false`, 6000);
+    hotspotLayer.clearLayers();
+    h.ventanas.forEach(v => {
+      const color = v.hotspot ? "#a6303a" : "#b4541f";
+      L.circle([v.centro.lat, v.centro.lon], { radius: 2200, color, weight: v.hotspot?2:0.5, fillColor: color, fillOpacity: v.hotspot ? .28 : Math.min(.25, .04 + v.pct_negativo/400) })
+        .bindPopup(`<b>Celda ${esc(v.geohash)}</b>${v.hotspot?' · <b style="color:#a6303a">HOTSPOT</b>':''}<br>% negativo: ${v.pct_negativo}%` + (v.pct_negativo_anterior!=null?` (antes ${v.pct_negativo_anterior}%)`:"") + `<br>reseñas en la ventana: ${v.n_resenas}`)
+        .addTo(hotspotLayer);
+    });
+  } catch(e){ if (!hotspotLayer.getLayers().length) drawSampleHotspots(); }
+}
+
+// 2 · tabla de alertas
+async function refreshAlertas(){
+  try {
+    const a = await getJSON(`/alerts?lat=${TAMPA[0]}&lon=${TAMPA[1]}&radio_km=50`, 6000);
+    const body = $("alertBody"); body.innerHTML = "";
+    alertLayer.clearLayers();
+    a.alertas.forEach(x => {
+      const cat = (x.categories||"").split(",")[0];
+      const fecha = x.fecha ? new Date(x.fecha).toLocaleString("es-CO",{dateStyle:"short", timeStyle:"short"}) : "";
+      body.insertAdjacentHTML("beforeend", `<tr><td>${esc(x.name || x.business_id.slice(0,8))}</td><td>${esc(cat)}</td><td style="color:var(--crit); font-weight:600">${(x.probabilidad_cierre*100).toFixed(1)}%</td><td>${fecha}</td></tr>`);
+      if (x.location && x.location.coordinates){
+        const [lon, lat] = x.location.coordinates;
+        L.circleMarker([lat, lon], { radius: 10, color:"#a6303a", weight:2, fill:false }).bindPopup(`<b>ALERTA</b> ${esc(x.name||"")}<br>prob. cierre ${(x.probabilidad_cierre*100).toFixed(1)}%`).addTo(alertLayer);
+      }
+    });
+    if (!a.alertas.length) body.innerHTML = `<tr><td colspan="4" style="color:var(--ink-soft)">Sin alertas activas en el radio</td></tr>`;
+    setPill("pillAlerts", true, `en vivo · ${a.total}`);
+  } catch(e){
+    if (!$("alertBody").children.length){
+      $("alertBody").innerHTML = [["Senegalese Corner","Senegalese","78.0%"],["Ybor Table","Restaurants","64.0%"],["Old Town Tacos","Mexican","41.0%"]]
+        .map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td><td style="color:var(--crit)">${r[2]}</td><td></td></tr>`).join("");
+    }
+    setPill("pillAlerts", false);
+  }
+}
+
+// 3 · supervivencia
+function drawLines(svgId, series, opts){
+  const svg = $(svgId); const W=340,H=150,L0=34,R0=8,T0=10,B0=22;
+  const allX = series.flatMap(s=>s.pts.map(p=>p[0])), allY = series.flatMap(s=>s.pts.map(p=>p[1]));
+  if (!allX.length){ svg.innerHTML = `<text x="12" y="75" font-size="11" fill="var(--ink-soft)">sin datos todavía</text>`; return; }
+  const xmin = opts.xmin ?? Math.min(...allX), xmax = Math.max(...allX, xmin+1);
+  const ymin = opts.ymin ?? 0, ymax = opts.ymax ?? Math.max(...allY, 1);
+  const X = v => L0 + (v-xmin)/(xmax-xmin)*(W-L0-R0), Y = v => H-B0 - (v-ymin)/(ymax-ymin)*(H-T0-B0);
+  let g = "";
+  for (let i=0;i<=4;i++){ const v = ymin+(ymax-ymin)*i/4; g += `<line x1="${L0}" x2="${W-R0}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/><text x="${L0-4}" y="${Y(v)+3}" font-size="8.5" text-anchor="end" fill="var(--ink-soft)">${opts.yfmt(v)}</text>`; }
+  g += `<text x="${L0}" y="${H-6}" font-size="8.5" fill="var(--ink-soft)">${opts.xfmt(xmin)}</text><text x="${W-R0}" y="${H-6}" font-size="8.5" text-anchor="end" fill="var(--ink-soft)">${opts.xfmt(xmax)}</text>`;
+  series.forEach(s => {
+    const d = s.step
+      ? s.pts.map((p,i)=> i===0 ? `M${X(p[0])},${Y(p[1])}` : `H${X(p[0])}V${Y(p[1])}`).join("")
+      : s.pts.map((p,i)=> `${i?"L":"M"}${X(p[0])},${Y(p[1])}`).join("");
+    g += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" ${s.dash?'stroke-dasharray="4 3"':''}/>`;
+    if (s.dots) s.pts.forEach(p => g += `<circle cx="${X(p[0])}" cy="${Y(p[1])}" r="2.4" fill="${s.color}"/>`);
+  });
+  if (opts.hline != null) g += `<line x1="${L0}" x2="${W-R0}" y1="${Y(opts.hline)}" y2="${Y(opts.hline)}" stroke="var(--ink-soft)" stroke-dasharray="2 3"/>`;
+  svg.innerHTML = g;
+}
+
+async function cargarCategorias(){
+  try {
+    const r = await getJSON("/survival");
+    const sel = $("catSelect"); const actual = sel.value;
+    sel.innerHTML = r.categorias.map(c => `<option value="${esc(c.categoria_principal)}">${esc(c.categoria_principal)} (n=${(c.todos||{}).n ?? "?"})</option>`).join("");
+    if ([...sel.options].some(o=>o.value===actual)) sel.value = actual;
+  } catch(e){}
+}
+async function refreshSupervivencia(){
+  const cat = $("catSelect").value || "Restaurants";
+  try {
+    const d = await getJSON("/survival/"+encodeURIComponent(cat));
+    const series = [];
+    if (d.todos) series.push({ pts: d.todos.puntos.map(p=>[p.dias, p.supervivencia]), color:"#1f6f54", step:true });
+    if (d.sin_entrada_tardia) series.push({ pts: d.sin_entrada_tardia.puntos.map(p=>[p.dias, p.supervivencia]), color:"#b4541f", step:true, dash:true });
+    drawLines("survivalSvg", series, { xmin:0, ymin:0, ymax:1, hline:0.5, yfmt:v=>(v*100).toFixed(0)+"%", xfmt:v=>Math.round(v)+" d" });
+    const t = d.todos || {}, s = d.sin_entrada_tardia || {};
+    const med = v => v==null ? "no alcanzada" : v.toLocaleString("es-CO")+" días";
+    $("survivalFoot").innerHTML = `<b style="color:#1f6f54">— todos</b> n=${t.n ?? "-"}, cierres=${t.eventos ?? "-"}, mediana ${med(t.mediana_dias)} &nbsp; <b style="color:#b4541f">- - sin entrada tardía</b> n=${s.n ?? "-"}, mediana ${med(s.mediana_dias)}<br>En riesgo al inicio: ${t.puntos ? t.puntos[0].en_riesgo : "-"} · línea punteada = 50% sobrevive`;
+    setPill("pillSurvival", true);
+  } catch(e){
+    drawLines("survivalSvg", [{pts:[[0,1],[900,.93],[1800,.82],[2700,.7],[3600,.6],[4956,.5],[6000,.44]], color:"#1f6f54", step:true}], { xmin:0, ymin:0, ymax:1, hline:.5, yfmt:v=>(v*100).toFixed(0)+"%", xfmt:v=>Math.round(v)+" d" });
+    $("survivalFoot").textContent = "Restaurants (ejemplo): mediana 4.956 días";
+    setPill("pillSurvival", false);
+  }
+}
+$("catSelect").onchange = refreshSupervivencia;
+
+// 4 · evolución del % negativo
+async function refreshEvolucion(){
+  try {
+    const r = await getJSON("/live/evolucion");
+    const pts = r.serie.map(s => [Date.parse(s.ventana_inicio), s.pct_negativo]);
+    drawLines("trendSvg", [{ pts, color:"#a6303a", dots:true }], { ymin:0, yfmt:v=>v.toFixed(0)+"%", xfmt:v=> new Date(v).toLocaleDateString("es-CO",{month:"short", year:"2-digit"}) });
+    const ult = r.serie[r.serie.length-1];
+    $("trendFoot").innerHTML = ult
+      ? `${r.total} ventanas de 30 días (tiempo del evento) · última: <b>${ult.pct_negativo}%</b> negativo en ${ult.n_resenas} reseñas, ${ult.hotspots} celda(s) hotspot`
+      : "Aún no hay ventanas: arranca el productor para verlas aparecer";
+    setPill("pillTrend", true, `en vivo · ${r.total}`);
+  } catch(e){
+    drawLines("trendSvg", [{ pts:[[0,18],[1,21],[2,19],[3,26],[4,24],[5,31]], color:"#a6303a", dots:true }], { ymin:0, yfmt:v=>v.toFixed(0)+"%", xfmt:v=>"mes "+(v+1) });
+    setPill("pillTrend", false);
+  }
+}
+
+// ---------- respaldo de ejemplo ----------
+function drawSampleBiz(){
+  let s = 7; const rnd = () => (s = (s*9301+49297)%233280)/233280;
+  const c = [[27.9478,-82.4584],[27.9560,-82.4300],[27.9370,-82.4870],[28.0150,-82.4900],[27.9800,-82.5300]];
+  for (let i=0;i<50;i++){ const k=c[i%c.length], p=rnd()*0.3;
+    L.circleMarker([k[0]+(rnd()-.5)*.035, k[1]+(rnd()-.5)*.045], {radius:5, color:"#fff", weight:1, fillColor:riskColor(p), fillOpacity:.9}).addTo(bizLayer); }
+}
+function drawSampleHotspots(){
+  [[27.965,-82.455],[27.920,-82.510]].forEach(h => L.circle(h, {radius:900, color:"#a6303a", weight:1, fillColor:"#a6303a", fillOpacity:.2}).addTo(hotspotLayer));
+}
+
+// ---------- ciclo ----------
+async function tick(){
+  await refreshHealth();
+  await Promise.allSettled([refreshEstado(), refreshAlertas(), refreshEvolucion(), refreshMapa()]);
+  $("lastUpdate").textContent = "actualizado " + new Date().toLocaleTimeString("es-CO");
+}
+(async () => { await cargarCategorias(); await refreshSupervivencia(); await tick(); setInterval(tick, 10000); })();
+</script>
+</body>
+</html>

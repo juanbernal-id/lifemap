@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LifeMap — Mapa en vivo (Tampa)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root{
+    --bg:#f6f4ef; --panel:#ffffff; --ink:#1c2420; --ink-soft:#5b6460;
+    --line:#e1ddd2; --accent:#1f6f54; --accent-soft:#dcefe6;
+    --warn:#b4541f; --warn-soft:#f6e6dc; --crit:#a6303a; --crit-soft:#f6dde0;
+    --chip:#eef0ea;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%; margin:0}
+  body{background:var(--bg); color:var(--ink); font-family:'Inter',system-ui,sans-serif; display:flex; flex-direction:column}
+  h1,h2,h3{font-family:'Space Grotesk',system-ui,sans-serif; margin:0}
+  .topbar{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:14px 18px; border-bottom:1px solid var(--line); background:var(--panel)}
+  .brand{display:flex; align-items:baseline; gap:10px}
+  .brand h1{font-size:1.3rem}
+  .brand span{color:var(--ink-soft); font-size:.82rem}
+  .badgerow{display:flex; gap:8px; flex-wrap:wrap}
+  .badge{display:inline-flex; align-items:center; gap:6px; font-size:.72rem; padding:4px 10px; border-radius:999px; background:var(--chip); color:var(--ink-soft); white-space:nowrap}
+  .badge.live{background:var(--accent-soft); color:var(--accent)}
+  .badge.live::before{content:""; width:7px; height:7px; border-radius:50%; background:var(--accent)}
+  .badge.sample::before{content:""; width:7px; height:7px; border-radius:50%; background:var(--warn)}
+  .badge.sample{background:var(--warn-soft); color:var(--warn)}
+  .wrap{flex:1; display:grid; grid-template-columns: minmax(0,1.6fr) minmax(300px,1fr); min-height:0}
+  @media (max-width:860px){ .wrap{grid-template-columns:1fr; grid-template-rows:50vh auto} }
+  #map{width:100%; height:100%}
+  .side{overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:14px; border-left:1px solid var(--line); background:var(--panel)}
+  .card{background:var(--chip); border-radius:12px; padding:13px}
+  .card h3{font-size:.88rem; margin-bottom:8px; display:flex; align-items:center; justify-content:space-between; gap:8px}
+  .metrics{display:grid; grid-template-columns:1fr 1fr; gap:9px}
+  .metric{background:var(--panel); border-radius:10px; padding:9px 11px}
+  .metric b{display:block; font-size:1.2rem; font-variant-numeric:tabular-nums}
+  .metric span{font-size:.68rem; color:var(--ink-soft)}
+  .alerts{display:flex; flex-direction:column; gap:7px; max-height:220px; overflow-y:auto}
+  .alert{display:flex; gap:9px; align-items:flex-start; padding:8px 9px; border-radius:9px; background:var(--crit-soft)}
+  .alert.mid{background:var(--warn-soft)}
+  .alert .dot{margin-top:5px; width:7px; height:7px; border-radius:50%; background:var(--crit); flex:none}
+  .alert.mid .dot{background:var(--warn)}
+  .alert div b{display:block; font-size:.78rem}
+  .alert div span{font-size:.68rem; color:var(--ink-soft)}
+  .survival svg,.trend svg{width:100%; height:110px; display:block}
+  .foot{font-size:.68rem; color:var(--ink-soft); margin-top:5px}
+  footer{font-size:.68rem; color:var(--ink-soft); text-align:center; padding:7px}
+  .pill{font-size:.64rem; padding:2px 7px; border-radius:999px}
+  .pill.live{background:var(--accent-soft); color:var(--accent)}
+  .pill.sample{background:var(--warn-soft); color:var(--warn)}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand"><h1>LifeMap — Tampa</h1><span>Reputación, riesgo y alerta temprana de cierre</span></div>
+  <div class="badgerow">
+    <span class="badge sample" id="apiBadge">conectando a la API…</span>
+    <span class="badge sample" id="mapBadge">mapa: cargando…</span>
+  </div>
+</div>
+
+<div class="wrap">
+  <div id="map"></div>
+  <div class="side">
+    <div class="card">
+      <h3>Modelo de riesgo de cierre <span class="pill sample" id="pillMetrics">ejemplo</span></h3>
+      <div class="metrics" id="metricsBox">
+        <div class="metric"><b>0.61</b><span>AUC-ROC</span></div>
+        <div class="metric"><b>0.80</b><span>Recall @ umbral 0.15</span></div>
+        <div class="metric"><b>2,967</b><span>Negocios analizados</span></div>
+        <div class="metric"><b id="alertCount">47</b><span>Alertas activas</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Alertas recientes <span class="pill sample" id="pillAlerts">ejemplo</span></h3>
+      <div class="alerts" id="alertList"></div>
+    </div>
+
+    <div class="card">
+      <h3>Supervivencia — Restaurants <span class="pill sample" id="pillSurvival">ejemplo</span></h3>
+      <div class="survival"><svg id="survivalSvg" viewBox="0 0 300 110" role="img" aria-label="Curva de supervivencia Kaplan-Meier"></svg></div>
+      <div class="foot" id="survivalFoot">mediana: 4,956 días</div>
+    </div>
+
+    <div class="card">
+      <h3>Evolución % reseñas negativas <span class="pill live" id="pillTrend">en vivo desde esta demo</span></h3>
+      <div class="trend"><svg id="trendSvg" viewBox="0 0 300 110" role="img" aria-label="Evolución del porcentaje de reseñas negativas durante la demo"></svg></div>
+      <div class="foot">Se arma mientras corre esta página, con cada lectura real de <code>/live/hotspots</code></div>
+    </div>
+  </div>
+</div>
+<footer>LifeMap · Entrega 2 · Big Data IUE — se conecta a <code id="apiUrlLabel">http://localhost:5051</code>; si la API no responde, cada panel cae a datos de ejemplo (marcados como tal) para que la demo nunca se quede en blanco.</footer>
+
+<script>
+  const API = (new URLSearchParams(location.search).get("api")) || "http://localhost:5051";
+  document.getElementById("apiUrlLabel").textContent = API;
+  const apiBadge = document.getElementById("apiBadge");
+  const mapBadge = document.getElementById("mapBadge");
+  const TAMPA = [27.9506, -82.4572];
+  const map = L.map('map', { scrollWheelZoom:true }).setView(TAMPA, 12);
+
+  const providers = [
+    { url:'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', attribution:'&copy; OpenStreetMap, &copy; CARTO', subdomains:'abcd' },
+    { url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution:'&copy; OpenStreetMap' },
+    { url:'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', attribution:'&copy; OpenStreetMap, &copy; CARTO', subdomains:'abcd' }
+  ];
+  let providerIdx = 0, currentLayer = null, failedTiles = 0, tilesLoaded = false;
+  function loadProvider(i){
+    if (currentLayer) map.removeLayer(currentLayer);
+    const p = providers[i]; failedTiles = 0;
+    currentLayer = L.tileLayer(p.url, { maxZoom: 19, attribution: p.attribution, subdomains: p.subdomains || 'abc' });
+    currentLayer.on('tileerror', () => {
+      failedTiles++;
+      if (failedTiles >= 4 && providerIdx < providers.length - 1){ providerIdx++; loadProvider(providerIdx); }
+      else if (failedTiles >= 4){ mapBadge.textContent = 'mapa: sin teselas en línea'; mapBadge.className='badge sample'; }
+    });
+    currentLayer.on('load', () => { if(!tilesLoaded){ tilesLoaded=true; mapBadge.textContent='mapa en vivo (OpenStreetMap)'; mapBadge.className='badge live'; }});
+    currentLayer.addTo(map);
+  }
+  loadProvider(0);
+
+  function riskColor(r){ if (r>0.55) return "#a6303a"; if (r>0.3) return "#b4541f"; return "#1f6f54"; }
+
+  // --- datos de ejemplo (respaldo si la API no responde) ---
+  function seedRandom(seed){ let s=seed; return ()=>{ s=(s*9301+49297)%233280; return s/233280; } }
+  const rnd = seedRandom(7);
+  const centers = [[27.9478,-82.4584],[27.9560,-82.4300],[27.9370,-82.4870],[28.0150,-82.4900],[27.9800,-82.5300],[27.9000,-82.4500]];
+  const sampleBusinesses = [];
+  for (let i=0;i<55;i++){
+    const c = centers[i % centers.length];
+    const risk = (i%3===0) ? 0.35+rnd()*0.4 : rnd()*0.5;
+    sampleBusinesses.push({ lat: c[0]+(rnd()-0.5)*0.035, lon: c[1]+(rnd()-0.5)*0.045, risk: Math.min(0.95,risk) });
+  }
+  const sampleHotspots = [ {lat:27.965, lon:-82.455, r:900}, {lat:27.920, lon:-82.510, r:700} ];
+  const sampleAlerts = [
+    {name:"Senegalese Corner", cat:"crit", msg:"riesgo 0.78 · tendencia negativa +22% en 6 meses"},
+    {name:"Ybor Table", cat:"crit", msg:"riesgo 0.64 · 3 reseñas negativas seguidas en streaming"},
+    {name:"Old Town Tacos", cat:"mid", msg:"riesgo 0.41 · sentimiento cayendo esta semana"},
+    {name:"Westshore Grill", cat:"mid", msg:"riesgo 0.37 · pocas reseñas, densidad alta de competidores"}
+  ];
+
+  let markerLayer = L.layerGroup().addTo(map);
+  function drawMarkers(points){
+    markerLayer.clearLayers();
+    points.forEach(b=>{
+      L.circleMarker([b.lat,b.lon], { radius: b.risk>0.55?8:6, color:"#fff", weight:1.3, fillColor: riskColor(b.risk), fillOpacity:0.9 })
+        .bindPopup(`riesgo ${(b.risk*100).toFixed(0)}%`).addTo(markerLayer);
+    });
+  }
+  drawMarkers(sampleBusinesses);
+  sampleHotspots.forEach(h=> L.circle([h.lat,h.lon], {radius:h.r, color:"#a6303a", weight:1, fillColor:"#a6303a", fillOpacity:0.15}).addTo(map));
+
+  function drawKM(svgEl, points){
+    svgEl.innerHTML = "";
+    const ns="http://www.w3.org/2000/svg";
+    const poly = document.createElementNS(ns,"polyline");
+    poly.setAttribute("points", points); poly.setAttribute("fill","none");
+    poly.setAttribute("stroke","var(--accent)"); poly.setAttribute("stroke-width","2.5");
+    svgEl.appendChild(poly);
+  }
+  drawKM(document.getElementById("survivalSvg"), "0,8 40,8 40,22 90,22 90,38 150,38 150,58 210,58 210,78 260,78 260,96 300,96");
+
+  const list = document.getElementById("alertList");
+  function renderAlerts(items){
+    list.innerHTML = "";
+    items.forEach(a=>{
+      const div = document.createElement("div");
+      div.className = "alert"+(a.cat==="mid"?" mid":"");
+      div.innerHTML = `<span class="dot"></span><div><b>${a.name}</b><span>${a.msg}</span></div>`;
+      list.appendChild(div);
+    });
+  }
+  renderAlerts(sampleAlerts);
+
+  // --- tendencia en vivo: se construye sondeando /live/hotspots mientras corre la demo ---
+  const trendPoints = [];
+  function drawTrend(){
+    const svgEl = document.getElementById("trendSvg");
+    svgEl.innerHTML = "";
+    if (trendPoints.length < 2) {
+      svgEl.innerHTML = '<text x="10" y="55" font-size="11" fill="var(--ink-soft)">esperando mas lecturas en vivo…</text>';
+      return;
+    }
+    const ns="http://www.w3.org/2000/svg";
+    const maxV = Math.max(10, ...trendPoints);
+    const stepX = 280/Math.max(1,trendPoints.length-1);
+    const pts = trendPoints.map((v,i)=> `${10+i*stepX},${100-(v/maxV)*90}`).join(" ");
+    const poly = document.createElementNS(ns,"polyline");
+    poly.setAttribute("points", pts); poly.setAttribute("fill","none");
+    poly.setAttribute("stroke","var(--crit)"); poly.setAttribute("stroke-width","2.5");
+    svgEl.appendChild(poly);
+  }
+  drawTrend();
+
+  // --- intentos reales contra la API, con respaldo a datos de ejemplo por panel ---
+  async function getJSON(path, timeoutMs){
+    const ctrl = new AbortController();
+    const t = setTimeout(()=>ctrl.abort(), timeoutMs||3000);
+    try {
+      const r = await fetch(API+path, {signal: ctrl.signal});
+      clearTimeout(t);
+      if (!r.ok) throw new Error("http "+r.status);
+      return await r.json();
+    } catch(e){ clearTimeout(t); throw e; }
+  }
+
+  async function refreshHealth(){
+    try {
+      const h = await getJSON("/health", 3000);
+      apiBadge.textContent = "API en vivo" + (h.kafka_consumer_lag!=null ? ` · lag ${h.kafka_consumer_lag}s` : "");
+      apiBadge.className = "badge live";
+      return true;
+    } catch(e){
+      apiBadge.textContent = "API sin conexión — usando ejemplo";
+      apiBadge.className = "badge sample";
+      return false;
+    }
+  }
+
+  async function refreshHotspots(){
+    try {
+      const data = await getJSON("/live/hotspots?lat="+TAMPA[0]+"&lon="+TAMPA[1]+"&radio_km=20", 3000);
+      const items = Array.isArray(data) ? data : (data.hotspots || data.items || []);
+      if (items.length){
+        const negPct = items.reduce((s,x)=> s+(x.pct_negativo||x.porcentaje_negativo||0),0)/items.length;
+        trendPoints.push(negPct);
+        if (trendPoints.length>24) trendPoints.shift();
+        drawTrend();
+        document.getElementById("pillTrend").textContent = "en vivo · "+items.length+" zonas";
+      }
+      return true;
+    } catch(e){ return false; }
+  }
+
+  async function refreshAlerts(){
+    try {
+      const data = await getJSON("/alerts?lat="+TAMPA[0]+"&lon="+TAMPA[1]+"&radio_km=20", 3000);
+      const items = Array.isArray(data) ? data : (data.alerts || data.items || []);
+      if (items.length){
+        renderAlerts(items.slice(0,8).map(a=>({
+          name: a.nombre || a.name || a.business_id || "negocio",
+          cat: (a.probabilidad||a.riesgo||0) > 0.6 ? "crit" : "mid",
+          msg: `riesgo ${((a.probabilidad||a.riesgo||0)*100).toFixed(0)}%`
+        })));
+        document.getElementById("alertCount").textContent = items.length;
+        document.getElementById("pillAlerts").textContent = "en vivo"; document.getElementById("pillAlerts").className="pill live";
+        document.getElementById("pillMetrics").textContent = "en vivo"; document.getElementById("pillMetrics").className="pill live";
+      }
+      return true;
+    } catch(e){ return false; }
+  }
+
+  async function refreshSurvival(){
+    try {
+      const data = await getJSON("/survival/Restaurants", 3000);
+      if (data && (data.puntos || data.points)){
+        const pts = data.puntos || data.points;
+        const maxT = Math.max(...pts.map(p=>p.t||p.x||0));
+        const line = pts.map(p=> `${(((p.t||p.x||0)/maxT)*290)+5},${100-(p.s||p.y||0)*90}`).join(" ");
+        drawKM(document.getElementById("survivalSvg"), line);
+        document.getElementById("pillSurvival").textContent = "en vivo"; document.getElementById("pillSurvival").className="pill live";
+        if (data.mediana) document.getElementById("survivalFoot").textContent = "mediana: "+data.mediana+" días";
+      }
+      return true;
+    } catch(e){ return false; }
+  }
+
+  async function tick(){
+    await refreshHealth();
+    await Promise.all([refreshHotspots(), refreshAlerts(), refreshSurvival()]);
+  }
+  tick();
+  setInterval(()=>{ refreshHealth(); refreshHotspots(); }, 8000);
+  setInterval(()=>{ refreshAlerts(); refreshSurvival(); }, 15000);
+</script>
+</body>
+</html>

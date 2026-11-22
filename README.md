@@ -62,7 +62,7 @@ Sin servidor en la nube, se usa un túnel desde el portátil:
 # opción más rápida, sin cuenta:
 cloudflared tunnel --url http://localhost:5051
 ```
-URL registrada: **https://solo-portraits-sean-belt.trycloudflare.com** (relanzada 2026-11-07 10:13 hora Bogotá; la URL anterior del 2026-11-06 se cayó durante la noche).
+URL registrada: **https://receives-cell-gadgets-cradle.trycloudflare.com** (relanzada 2026-11-22, confirmada con /health respondiendo ok; la URL anterior del 7-nov ya no está activa).
 Nota: no alcanza a cumplir el "responde desde 48h antes" al 100%, pero sí
 responderá durante la ventana de evaluación — se documenta la limitación
 en el informe.

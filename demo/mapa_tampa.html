@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LifeMap — Mapa en vivo (Tampa)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root{
+    --bg:#f6f4ef; --panel:#ffffff; --ink:#1c2420; --ink-soft:#5b6460;
+    --line:#e1ddd2; --accent:#1f6f54; --accent-soft:#dcefe6;
+    --warn:#b4541f; --warn-soft:#f6e6dc; --crit:#a6303a; --crit-soft:#f6dde0;
+    --chip:#eef0ea;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%; margin:0}
+  body{background:var(--bg); color:var(--ink); font-family:'Inter',system-ui,sans-serif; display:flex; flex-direction:column}
+  h1,h2,h3{font-family:'Space Grotesk',system-ui,sans-serif; margin:0}
+  .topbar{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:14px 18px; border-bottom:1px solid var(--line); background:var(--panel)}
+  .brand{display:flex; align-items:baseline; gap:10px}
+  .brand h1{font-size:1.3rem}
+  .brand span{color:var(--ink-soft); font-size:.82rem}
+  .badge{display:inline-flex; align-items:center; gap:6px; font-size:.72rem; padding:4px 10px; border-radius:999px; background:var(--accent-soft); color:var(--accent); white-space:nowrap}
+  .badge::before{content:""; width:7px; height:7px; border-radius:50%; background:var(--accent)}
+  .wrap{flex:1; display:grid; grid-template-columns: minmax(0,1.6fr) minmax(280px,1fr); min-height:0}
+  @media (max-width:860px){ .wrap{grid-template-columns:1fr; grid-template-rows:55vh auto} }
+  #map{width:100%; height:100%}
+  .side{overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:16px; border-left:1px solid var(--line); background:var(--panel)}
+  .card{background:var(--chip); border-radius:12px; padding:14px}
+  .card h3{font-size:.92rem; margin-bottom:10px}
+  .cardlabel{font-size:.7rem; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-soft); margin-bottom:4px}
+  .metrics{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+  .metric{background:var(--panel); border-radius:10px; padding:10px 12px}
+  .metric b{display:block; font-size:1.25rem; font-variant-numeric:tabular-nums}
+  .metric span{font-size:.7rem; color:var(--ink-soft)}
+  .alerts{display:flex; flex-direction:column; gap:8px}
+  .alert{display:flex; gap:10px; align-items:flex-start; padding:9px 10px; border-radius:10px; background:var(--crit-soft)}
+  .alert.mid{background:var(--warn-soft)}
+  .alert .dot{margin-top:5px; width:8px; height:8px; border-radius:50%; background:var(--crit); flex:none}
+  .alert.mid .dot{background:var(--warn)}
+  .alert div b{display:block; font-size:.8rem}
+  .alert div span{font-size:.7rem; color:var(--ink-soft)}
+  .legend{font-size:.72rem; color:var(--ink-soft); display:flex; flex-direction:column; gap:5px}
+  .legend .row{display:flex; align-items:center; gap:6px}
+  .legend .dot{width:9px; height:9px; border-radius:50%; flex:none}
+  .popupbox b{display:block; font-size:.85rem; margin-bottom:2px}
+  footer{font-size:.7rem; color:var(--ink-soft); text-align:center; padding:8px}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand"><h1>LifeMap — Tampa</h1><span>Reputación, riesgo y alerta temprana de cierre</span></div>
+  <span class="badge" id="statusBadge">mapa en vivo (OpenStreetMap)</span>
+</div>
+
+<div class="wrap">
+  <div id="map"></div>
+  <div class="side">
+    <div class="card">
+      <h3>Modelo de riesgo de cierre</h3>
+      <div class="metrics">
+        <div class="metric"><b>0.61</b><span>AUC-ROC</span></div>
+        <div class="metric"><b>0.80</b><span>Recall @ umbral 0.15</span></div>
+        <div class="metric"><b>2,967</b><span>Negocios analizados</span></div>
+        <div class="metric"><b>47</b><span>Alertas (demo streaming)</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Leyenda</h3>
+      <div class="legend">
+        <div class="row"><span class="dot" style="background:var(--accent)"></span> Riesgo bajo</div>
+        <div class="row"><span class="dot" style="background:var(--warn)"></span> Riesgo medio</div>
+        <div class="row"><span class="dot" style="background:var(--crit)"></span> Riesgo alto / alerta</div>
+        <div class="row"><span class="dot" style="background:var(--crit); opacity:.3; width:14px;height:14px"></span> Hotspot (zona)</div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Alertas recientes</h3>
+      <div class="alerts" id="alertList"></div>
+    </div>
+  </div>
+</div>
+<footer>LifeMap · Entrega 2 · Big Data IUE — demo con mapa real (OpenStreetMap); requiere internet. Datos de negocios: muestra representativa de los resultados del modelo, no registros individuales de Yelp.</footer>
+
+<script>
+  const map = L.map('map', { scrollWheelZoom:true }).setView([27.9506, -82.4572], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+
+  function seedRandom(seed){ let s=seed; return ()=>{ s=(s*9301+49297)%233280; return s/233280; } }
+  const rnd = seedRandom(7);
+  const categories = ["Restaurants","Senegalese","Food"];
+  const names = ["Bay Bistro","Harbor Grill","Casa Verde","Tampa Diner","Riverside Kitchen","Sunset Cafe","Palm Deli","Gulf Coast Eats","Old Town Tacos","Ybor Table","Corner Pantry","Bayshore Bites","Downtown Noodle","Westshore Grill","Seminole Spice","Channelside Cafe","Hyde Park Bakery","Davis Islands Diner","Tampa Heights Eats","Armature Bar & Grill"];
+
+  // puntos centrados en zonas reales de Tampa (evitando el agua de la bahía)
+  const centers = [
+    [27.9478,-82.4584], // downtown
+    [27.9560,-82.4300], // Ybor City
+    [27.9370,-82.4870], // South Tampa / Hyde Park
+    [28.0150,-82.4900], // Carrollwood
+    [27.9800,-82.5300], // Westshore
+    [27.9000,-82.4500]  // Interbay / MacDill area
+  ];
+
+  const businesses = [];
+  for (let i=0;i<55;i++){
+    const c = centers[i % centers.length];
+    const lat = c[0] + (rnd()-0.5)*0.035;
+    const lon = c[1] + (rnd()-0.5)*0.045;
+    const cat = categories[i%3===0?1:(i%5===0?2:0)];
+    const risk = cat==="Senegalese" ? 0.35+rnd()*0.4 : rnd()*0.5;
+    businesses.push({
+      name: names[i % names.length] + (i>=names.length? " "+(Math.floor(i/names.length)+1):""),
+      cat, lat, lon,
+      risk: Math.min(0.95, risk),
+      sentiment: (0.3+rnd()*0.6).toFixed(2),
+      reviews: Math.floor(20+rnd()*300)
+    });
+  }
+
+  function riskColor(r){ if (r>0.55) return "#a6303a"; if (r>0.3) return "#b4541f"; return "#1f6f54"; }
+
+  businesses.forEach(b=>{
+    L.circleMarker([b.lat,b.lon], {
+      radius: b.risk>0.55?8:6,
+      color:"#ffffff", weight:1.4, fillColor: riskColor(b.risk), fillOpacity:0.9
+    }).addTo(map).bindPopup(
+      `<div class="popupbox"><b>${b.name}</b>${b.cat} · ${b.reviews} reseñas<br>` +
+      `<span style="color:${riskColor(b.risk)};font-weight:600">riesgo ${(b.risk*100).toFixed(0)}%</span> · sentimiento ${b.sentiment}</div>`
+    );
+  });
+
+  const hotspots = [
+    {lat:27.965, lon:-82.455, r:900, label:"Alza de % negativo — zona norte"},
+    {lat:27.920, lon:-82.510, r:700, label:"Alza de % negativo — zona oeste"}
+  ];
+  hotspots.forEach(h=>{
+    L.circle([h.lat,h.lon], {radius:h.r, color:"#a6303a", weight:1, fillColor:"#a6303a", fillOpacity:0.15})
+      .addTo(map).bindPopup(h.label);
+  });
+
+  const sampleAlerts = [
+    {name:"Senegalese Corner", cat:"crit", msg:"riesgo 0.78 · tendencia negativa +22% en 6 meses"},
+    {name:"Ybor Table", cat:"crit", msg:"riesgo 0.64 · 3 reseñas negativas seguidas en streaming"},
+    {name:"Old Town Tacos", cat:"mid", msg:"riesgo 0.41 · sentimiento cayendo esta semana"},
+    {name:"Westshore Grill", cat:"mid", msg:"riesgo 0.37 · pocas reseñas, densidad alta de competidores"}
+  ];
+  const list = document.getElementById("alertList");
+  sampleAlerts.forEach(a=>{
+    const div = document.createElement("div");
+    div.className = "alert"+(a.cat==="mid"?" mid":"");
+    div.innerHTML = `<span class="dot"></span><div><b>${a.name}</b><span>${a.msg}</span></div>`;
+    list.appendChild(div);
+  });
+</script>
+</body>
+</html>

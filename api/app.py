@@ -11,6 +11,15 @@ from pymongo.errors import OperationFailure, PyMongoError
 
 app = Flask(__name__)
 
+@app.after_request
+def _agregar_cors(resp):
+    # CORS abierto de solo lectura, para que el dashboard (archivo local o pagina estatica)
+    # pueda hacer fetch() a estos endpoints desde el navegador durante la demo en clase.
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return resp
+
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb://mongo:27017")
 MONGO_DB = os.environ.get("MONGO_DB", "lifemap")
 GIT_COMMIT = os.environ.get("GIT_COMMIT", "dev")
@@ -441,6 +450,13 @@ def alerts_get():
         {k: v for k, v in d.items() if k != "_id"}
         for d in alerts_col.find(filtro, maxTimeMS=TIMEOUT_MS).sort("probabilidad_cierre", -1)
     ]
+    nombres = {
+        n["business_id"]: n.get("name")
+        for n in negocios.find({"business_id": {"$in": [d["business_id"] for d in docs]}},
+                               {"business_id": 1, "name": 1, "_id": 0})
+    }
+    for d in docs:
+        d["name"] = nombres.get(d["business_id"])
     return jsonify({"centro": {"lat": lat, "lon": lon}, "radio_km": radio_km, "total": len(docs), "alertas": docs})
 
 
@@ -467,6 +483,51 @@ def alerts_post():
     return jsonify({"total": len(docs), "alertas": docs})
 
 
+
+def _limpiar_json(obj):
+    """Reemplaza Infinity/-Infinity/NaN (validos en Python/Mongo pero NO en JSON
+    estandar) por None, para que el navegador pueda hacer JSON.parse() sin tronar."""
+    if isinstance(obj, dict):
+        return {k: _limpiar_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_limpiar_json(v) for v in obj]
+    if isinstance(obj, float) and (obj != obj or obj in (float("inf"), float("-inf"))):
+        return None
+    return obj
+
+@app.route("/survival")
+def survival_lista():
+    """Categorias que tienen curva KM (para el selector del dashboard)."""
+    docs = list(supervivencia_categoria.find({}, {"_id": 0, "categoria_principal": 1,
+                                                  "todos.n": 1, "todos.mediana_dias": 1}))
+    docs.sort(key=lambda d: -((d.get("todos") or {}).get("n") or 0))
+    return jsonify(_limpiar_json({"total": len(docs), "categorias": docs}))
+
+
+@app.route("/live/evolucion")
+def live_evolucion():
+    """E2.8 - evolucion del % de resenas negativas por ventana de 30 dias
+    (tiempo del evento), sumando todas las celdas de geohash."""
+    pipeline = [
+        {"$group": {"_id": "$ventana_inicio",
+                    "n_resenas": {"$sum": "$n_resenas"},
+                    "n_negativas": {"$sum": "$n_negativas"},
+                    "celdas": {"$sum": 1},
+                    "hotspots": {"$sum": {"$cond": ["$hotspot", 1, 0]}}}},
+        {"$sort": {"_id": 1}},
+    ]
+    serie = []
+    for d in ventanas_geohash.aggregate(pipeline, maxTimeMS=TIMEOUT_MS):
+        serie.append({
+            "ventana_inicio": d["_id"],
+            "n_resenas": d["n_resenas"],
+            "pct_negativo": round(d["n_negativas"] / d["n_resenas"] * 100, 2) if d["n_resenas"] else 0.0,
+            "celdas": d["celdas"],
+            "hotspots": d["hotspots"],
+        })
+    return jsonify({"total": len(serie), "serie": serie})
+
+
 @app.route("/survival/<categoria>")
 def survival_categoria(categoria):
     """E2.5/E2.8 - curva de Kaplan-Meier por categoria principal."""
@@ -478,7 +539,7 @@ def survival_categoria(categoria):
             f"No hay curva de supervivencia para la categoria '{categoria}' "
             "(no existe o no alcanza el minimo de negocios del grupo)"
         )
-    return jsonify(doc)
+    return jsonify(_limpiar_json(doc))
 
 
 UMBRAL_HOTSPOT_PP = 15
@@ -549,6 +610,8 @@ def risk_near():
         resultados.append({
             "business_id": d["business_id"],
             "name": d.get("name"),
+            "lat": d["location"]["coordinates"][1],
+            "lon": d["location"]["coordinates"][0],
             "distancia_m": round(d["distancia_m"], 1),
             "probabilidad_cierre": round(probabilidad, 4),
             "sentimiento_actualizado": round(sentimiento_actualizado, 4),

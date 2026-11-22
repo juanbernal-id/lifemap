@@ -267,6 +267,31 @@ def construir_query_inferencia(parseado, modelo, etiquetas, negocios_snap, model
 # QUERY B: ventanas geoespaciales + hotspot
 # ---------------------------------------------------------------------------
 
+def geohash_a_poligono(geohash):
+    """Reconstruye el bounding box (GeoJSON Polygon) de una celda 'geohash_simple'.
+    El geohash es 'lat_lon' redondeados a la escala de GEOHASH_PRECISION, asi que
+    cada celda es un cuadrado centrado en ese punto; el semi-ancho es la mitad
+    del paso de la rejilla. Satisface E2.4: la ventana queda guardada con
+    geometria consultable (2dsphere) de su celda, no solo el string del geohash."""
+    try:
+        lat_s, lon_s = geohash.split("_")
+        lat, lon = float(lat_s), float(lon_s)
+    except (ValueError, AttributeError):
+        return None
+    escala = 10 ** (GEOHASH_PRECISION - 2)
+    semi = 0.5 / escala
+    return {
+        "type": "Polygon",
+        "coordinates": [[
+            [lon - semi, lat - semi],
+            [lon + semi, lat - semi],
+            [lon + semi, lat + semi],
+            [lon - semi, lat + semi],
+            [lon - semi, lat - semi],
+        ]],
+    }
+
+
 def construir_query_ventanas(parseado, negocios_snap):
     con_zona = parseado.join(negocios_snap, "business_id", "inner")
 
@@ -303,6 +328,7 @@ def construir_query_ventanas(parseado, negocios_snap):
                 {"geohash": r.geohash, "ventana_inicio": inicio},
                 {"$set": {
                     "geohash": r.geohash,
+                    "geometria": geohash_a_poligono(r.geohash),
                     "ventana_inicio": inicio,
                     "ventana_fin": fin,
                     "n_resenas": int(r.n),
@@ -346,6 +372,10 @@ def main():
         {"$set": {"modelo_hash": hash_modelo_versionado(), "arrancado": datetime.now(timezone.utc)}},
         upsert=True,
     )
+    # E2.4: indice 2dsphere sobre la geometria de cada celda, para que quede
+    # realmente consultable ($geoWithin/$geoIntersects), igual que se hace con
+    # "location" en negocios (ingesta/limpieza_dask.py).
+    cliente_meta[MONGO_DB]["ventanas_geohash"].create_index([("geometria", "2dsphere")])
     cliente_meta.close()
 
     parseado = leer_topic(spark)
